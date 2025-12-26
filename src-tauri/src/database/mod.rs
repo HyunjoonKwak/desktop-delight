@@ -319,3 +319,205 @@ pub fn clear_history(db_path: &PathBuf) -> Result<(), String> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    fn create_test_db() -> (PathBuf, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let db_path = dir.path().join("test.db");
+        init_database(&db_path).unwrap();
+        (db_path, dir)
+    }
+
+    #[test]
+    fn test_init_database() {
+        let (db_path, _dir) = create_test_db();
+        assert!(db_path.exists());
+
+        // Verify tables exist
+        let conn = Connection::open(&db_path).unwrap();
+        let tables: Vec<String> = conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(Result::ok)
+            .collect();
+
+        assert!(tables.contains(&"settings".to_string()));
+        assert!(tables.contains(&"rules".to_string()));
+        assert!(tables.contains(&"extension_mappings".to_string()));
+        assert!(tables.contains(&"exclusions".to_string()));
+        assert!(tables.contains(&"history".to_string()));
+    }
+
+    #[test]
+    fn test_default_extension_mappings() {
+        let (db_path, _dir) = create_test_db();
+        let conn = Connection::open(&db_path).unwrap();
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM extension_mappings", [], |row| row.get(0))
+            .unwrap();
+
+        // Should have default mappings
+        assert!(count > 0);
+
+        // Verify some specific mappings
+        let category: String = conn
+            .query_row(
+                "SELECT category FROM extension_mappings WHERE extension = '.jpg'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(category, "images");
+
+        let category: String = conn
+            .query_row(
+                "SELECT category FROM extension_mappings WHERE extension = '.pdf'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(category, "documents");
+    }
+
+    #[test]
+    fn test_set_and_get_setting() {
+        let (db_path, _dir) = create_test_db();
+
+        // Set a setting
+        set_setting(&db_path, "test_key", "test_value").unwrap();
+
+        // Get the setting
+        let value = get_setting(&db_path, "test_key").unwrap();
+        assert_eq!(value, Some("test_value".to_string()));
+
+        // Get non-existent setting
+        let value = get_setting(&db_path, "non_existent").unwrap();
+        assert_eq!(value, None);
+    }
+
+    #[test]
+    fn test_update_setting() {
+        let (db_path, _dir) = create_test_db();
+
+        // Set initial value
+        set_setting(&db_path, "key", "value1").unwrap();
+        assert_eq!(get_setting(&db_path, "key").unwrap(), Some("value1".to_string()));
+
+        // Update value
+        set_setting(&db_path, "key", "value2").unwrap();
+        assert_eq!(get_setting(&db_path, "key").unwrap(), Some("value2".to_string()));
+    }
+
+    #[test]
+    fn test_get_all_settings() {
+        let (db_path, _dir) = create_test_db();
+
+        set_setting(&db_path, "key1", "value1").unwrap();
+        set_setting(&db_path, "key2", "value2").unwrap();
+        set_setting(&db_path, "key3", "value3").unwrap();
+
+        let settings = get_all_settings(&db_path).unwrap();
+
+        assert_eq!(settings.get("key1"), Some(&"value1".to_string()));
+        assert_eq!(settings.get("key2"), Some(&"value2".to_string()));
+        assert_eq!(settings.get("key3"), Some(&"value3".to_string()));
+    }
+
+    #[test]
+    fn test_add_and_get_history() {
+        let (db_path, _dir) = create_test_db();
+
+        // Add history items
+        let id1 = add_history(&db_path, "move", "Moved file.txt", r#"{"from": "/a", "to": "/b"}"#).unwrap();
+        let id2 = add_history(&db_path, "delete", "Deleted file2.txt", r#"{"path": "/a/file2.txt"}"#).unwrap();
+
+        assert!(id1 > 0);
+        assert!(id2 > id1);
+
+        // Get history
+        let history = get_history(&db_path, 10, 0).unwrap();
+        assert_eq!(history.len(), 2);
+
+        // History should be in reverse chronological order
+        assert_eq!(history[0].id, id2);
+        assert_eq!(history[1].id, id1);
+    }
+
+    #[test]
+    fn test_get_history_item() {
+        let (db_path, _dir) = create_test_db();
+
+        let id = add_history(&db_path, "rename", "Renamed file", r#"{"old": "a.txt", "new": "b.txt"}"#).unwrap();
+
+        let item = get_history_item(&db_path, id).unwrap();
+
+        assert_eq!(item.id, id);
+        assert_eq!(item.operation_type, "rename");
+        assert_eq!(item.description, "Renamed file");
+        assert!(!item.is_undone);
+    }
+
+    #[test]
+    fn test_mark_history_undone() {
+        let (db_path, _dir) = create_test_db();
+
+        let id = add_history(&db_path, "move", "Moved file", "{}").unwrap();
+
+        // Initially not undone
+        let item = get_history_item(&db_path, id).unwrap();
+        assert!(!item.is_undone);
+
+        // Mark as undone
+        mark_history_undone(&db_path, id).unwrap();
+
+        let item = get_history_item(&db_path, id).unwrap();
+        assert!(item.is_undone);
+    }
+
+    #[test]
+    fn test_clear_history() {
+        let (db_path, _dir) = create_test_db();
+
+        add_history(&db_path, "move", "Moved file1", "{}").unwrap();
+        add_history(&db_path, "move", "Moved file2", "{}").unwrap();
+        add_history(&db_path, "move", "Moved file3", "{}").unwrap();
+
+        let history = get_history(&db_path, 10, 0).unwrap();
+        assert_eq!(history.len(), 3);
+
+        clear_history(&db_path).unwrap();
+
+        let history = get_history(&db_path, 10, 0).unwrap();
+        assert_eq!(history.len(), 0);
+    }
+
+    #[test]
+    fn test_history_pagination() {
+        let (db_path, _dir) = create_test_db();
+
+        // Add 5 history items
+        for i in 1..=5 {
+            add_history(&db_path, "move", &format!("Moved file{}", i), "{}").unwrap();
+        }
+
+        // Test limit
+        let history = get_history(&db_path, 2, 0).unwrap();
+        assert_eq!(history.len(), 2);
+
+        // Test offset
+        let history = get_history(&db_path, 2, 2).unwrap();
+        assert_eq!(history.len(), 2);
+
+        // Test offset beyond available
+        let history = get_history(&db_path, 10, 10).unwrap();
+        assert_eq!(history.len(), 0);
+    }
+}
