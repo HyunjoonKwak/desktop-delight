@@ -285,6 +285,48 @@ export const watcherApi = {
   },
 };
 
+// Backup types
+export interface BackupResult {
+  backup_path: string;
+  files_count: number;
+  total_size: number;
+}
+
+export interface BackupInfo {
+  name: string;
+  path: string;
+  size: number;
+  file_count: number;
+  created_at: string;
+}
+
+// Backup API
+export const backupApi = {
+  backupDesktop: async (backupLocation?: string): Promise<BackupResult> => {
+    if (!isTauri()) {
+      throw new Error('Backup is only available in desktop app');
+    }
+    return invoke<BackupResult>('backup_desktop', { backupLocation });
+  },
+
+  listBackups: async (): Promise<BackupInfo[]> => {
+    if (!isTauri()) return [];
+    return invoke<BackupInfo[]>('list_backups');
+  },
+
+  restoreBackup: async (backupPath: string): Promise<number> => {
+    if (!isTauri()) {
+      throw new Error('Restore is only available in desktop app');
+    }
+    return invoke<number>('restore_backup', { backupPath });
+  },
+
+  deleteBackup: async (backupPath: string): Promise<void> => {
+    if (!isTauri()) return;
+    return invoke<void>('delete_backup', { backupPath });
+  },
+};
+
 // Utility function to format relative date
 export const formatRelativeDate = (dateString: string): string => {
   const date = new Date(dateString);

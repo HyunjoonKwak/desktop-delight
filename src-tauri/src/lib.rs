@@ -99,6 +99,11 @@ pub fn run() {
             commands::file_ops::delete_file,
             commands::file_ops::rename_file,
             commands::file_ops::create_folder,
+            // Backup commands
+            commands::file_ops::backup_desktop,
+            commands::file_ops::list_backups,
+            commands::file_ops::restore_backup,
+            commands::file_ops::delete_backup,
             // Organizer commands
             commands::organizer::preview_organization,
             commands::organizer::execute_organization,

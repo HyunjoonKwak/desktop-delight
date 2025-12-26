@@ -21,11 +21,13 @@ import {
   Code,
   Package,
   File,
+  Shield,
 } from "lucide-react";
 import FileCard from "./FileCard";
 import HistoryPanel, { HistoryItem } from "./HistoryPanel";
 import FileDetailPanel from "./FileDetailPanel";
 import OrganizeRulesModal from "./OrganizeRulesModal";
+import { BackupManager } from "./BackupManager";
 import { useToast } from "@/hooks/use-toast";
 import { fileApi, historyApi, organizerApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
 import type { FileInfo, FileCategory } from "@/lib/types";
@@ -79,6 +81,7 @@ export default function DesktopView() {
   const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
+  const [isBackupOpen, setIsBackupOpen] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [selectedFileForDetail, setSelectedFileForDetail] = useState<string | null>(null);
   const { toast } = useToast();
@@ -368,6 +371,17 @@ export default function DesktopView() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Backup Button */}
+          <motion.button
+            onClick={() => setIsBackupOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-accent/20 text-accent hover:bg-accent/30 transition-all"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <Shield className="w-5 h-5" />
+            <span>백업</span>
+          </motion.button>
+
           {/* Refresh Button */}
           <motion.button
             onClick={handleRefresh}
@@ -705,6 +719,12 @@ export default function DesktopView() {
             details: `${rules.length}개의 규칙을 설정했습니다`,
           });
         }}
+      />
+
+      {/* Backup Manager */}
+      <BackupManager
+        open={isBackupOpen}
+        onOpenChange={setIsBackupOpen}
       />
     </div>
   );
