@@ -249,8 +249,11 @@ export const rulesApi = {
     return invoke<UnifiedPreview[]>('preview_unified', { sourcePath });
   },
 
-  executeUnified: async (sourcePath: string): Promise<UnifiedOrganizeResult> => {
-    return invoke<UnifiedOrganizeResult>('execute_unified', { sourcePath });
+  executeUnified: async (sourcePath: string, excludedDestinations?: string[]): Promise<UnifiedOrganizeResult> => {
+    return invoke<UnifiedOrganizeResult>('execute_unified', {
+      sourcePath,
+      excludedDestinations: excludedDestinations || [],
+    });
   },
 };
 

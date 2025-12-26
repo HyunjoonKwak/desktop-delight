@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useCallback } from "react";
+import { useState, useMemo, useEffect, useCallback, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MonitorUp,
@@ -25,6 +25,8 @@ import {
   LayoutGrid,
   List,
   Folder,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import FileCard from "./FileCard";
 import HistoryPanel, { HistoryItem } from "./HistoryPanel";
@@ -71,7 +73,9 @@ const categories = [
   { id: "videos", label: "동영상", icon: Video, color: "hsl(270, 70%, 55%)" },
   { id: "music", label: "음악", icon: Music, color: "hsl(160, 84%, 39%)" },
   { id: "archives", label: "압축파일", icon: Archive, color: "hsl(35, 92%, 50%)" },
+  { id: "installers", label: "설치파일", icon: Package, color: "hsl(280, 70%, 50%)" },
   { id: "code", label: "코드", icon: Code, color: "hsl(200, 70%, 50%)" },
+  { id: "others", label: "기타", icon: File, color: "hsl(220, 10%, 50%)" },
 ];
 
 // Mock data for development without Tauri
@@ -104,7 +108,67 @@ export default function DesktopView() {
   const [desktopPath, setDesktopPath] = useState<string>("");
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [selectedFileForDetail, setSelectedFileForDetail] = useState<string | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(true); // Default to true initially
+  const categoriesScrollRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
+
+  // Check scroll position for category cards
+  const checkScrollPosition = useCallback(() => {
+    const container = categoriesScrollRef.current;
+    if (container) {
+      const { scrollLeft, scrollWidth, clientWidth } = container;
+      const maxScroll = scrollWidth - clientWidth;
+
+      setCanScrollLeft(scrollLeft > 5);
+      setCanScrollRight(scrollLeft < maxScroll - 5);
+    }
+  }, []);
+
+  // Scroll categories left/right
+  const scrollCategories = (direction: 'left' | 'right') => {
+    const container = categoriesScrollRef.current;
+    console.log('[DesktopView] scrollCategories called:', direction, 'container:', !!container);
+    if (container) {
+      const scrollAmount = 200;
+      const currentScroll = container.scrollLeft;
+      const maxScroll = container.scrollWidth - container.clientWidth;
+      console.log('[DesktopView] Current scroll:', currentScroll, 'Max scroll:', maxScroll, 'clientWidth:', container.clientWidth, 'scrollWidth:', container.scrollWidth);
+
+      let newScrollLeft: number;
+      if (direction === 'left') {
+        newScrollLeft = Math.max(0, currentScroll - scrollAmount);
+      } else {
+        newScrollLeft = Math.min(maxScroll, currentScroll + scrollAmount);
+      }
+
+      console.log('[DesktopView] Setting scrollLeft to:', newScrollLeft);
+
+      // Use direct scrollLeft assignment for immediate effect
+      container.scrollLeft = newScrollLeft;
+
+      // Update state after scroll
+      setTimeout(() => {
+        checkScrollPosition();
+      }, 50);
+    }
+  };
+
+  // Check scroll on mount and resize
+  useEffect(() => {
+    checkScrollPosition();
+    window.addEventListener('resize', checkScrollPosition);
+    return () => window.removeEventListener('resize', checkScrollPosition);
+  }, [checkScrollPosition]);
+
+  // Check scroll after categories are rendered
+  useEffect(() => {
+    // Small delay to ensure DOM is fully rendered
+    const timer = setTimeout(() => {
+      checkScrollPosition();
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [categories.length, checkScrollPosition]);
 
   // Load files on mount
   const loadFiles = useCallback(async () => {
@@ -273,13 +337,13 @@ export default function DesktopView() {
   };
 
   // Execute unified organization (called from preview modal)
-  const executeOrganization = async () => {
+  const executeOrganization = async (excludedDestinations?: string[]) => {
     setIsOrganizing(true);
 
     try {
       if (isTauri()) {
         // Execute unified organization with rules applied
-        const result = await rulesApi.executeUnified(desktopPath);
+        const result = await rulesApi.executeUnified(desktopPath, excludedDestinations);
 
         if (result.success) {
           setOrganized(true);
@@ -393,8 +457,8 @@ export default function DesktopView() {
   return (
     <div className="flex-1 p-6 overflow-auto">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
-        <div className="flex items-center gap-4">
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8">
+        <div className="flex items-center gap-4 flex-shrink-0">
           <div className="w-12 h-12 rounded-2xl gradient-primary flex items-center justify-center shadow-glow">
             <MonitorUp className="w-6 h-6 text-primary-foreground" />
           </div>
@@ -408,50 +472,54 @@ export default function DesktopView() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
           {/* Backup Button */}
           <motion.button
             onClick={() => setIsBackupOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-accent/20 text-accent hover:bg-accent/30 transition-all"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-accent/20 text-accent hover:bg-accent/30 transition-all text-sm"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            title="백업"
           >
-            <Shield className="w-5 h-5" />
-            <span>백업</span>
+            <Shield className="w-4 h-4" />
+            <span className="hidden sm:inline">백업</span>
           </motion.button>
 
           {/* Refresh Button */}
           <motion.button
             onClick={handleRefresh}
             disabled={isLoading}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all disabled:opacity-50"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all disabled:opacity-50 text-sm"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            title="새로고침"
           >
-            <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
-            <span>새로고침</span>
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+            <span className="hidden sm:inline">새로고침</span>
           </motion.button>
 
           {/* Rules Button */}
           <motion.button
             onClick={() => setIsRulesModalOpen(true)}
-            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all"
+            className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all text-sm"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            title="정리 규칙"
           >
-            <Settings2 className="w-5 h-5" />
-            <span>정리 규칙</span>
+            <Settings2 className="w-4 h-4" />
+            <span className="hidden sm:inline">정리 규칙</span>
           </motion.button>
 
           {/* History Button */}
           <motion.button
             onClick={() => setIsHistoryOpen(true)}
-            className="relative flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all"
+            className="relative flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all text-sm"
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            title="히스토리"
           >
-            <History className="w-5 h-5" />
-            <span>히스토리</span>
+            <History className="w-4 h-4" />
+            <span className="hidden sm:inline">히스토리</span>
             {history.filter((h) => !h.undone).length > 0 && (
               <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full gradient-primary text-[10px] font-bold text-primary-foreground flex items-center justify-center">
                 {history.filter((h) => !h.undone).length}
@@ -463,13 +531,14 @@ export default function DesktopView() {
           <motion.button
             onClick={handleOrganize}
             disabled={isOrganizing || organized || isLoading}
-            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all ${
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all text-sm ${
               organized
                 ? "bg-accent/20 text-accent"
                 : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
             } disabled:opacity-50`}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
+            title="자동 정리"
           >
             {isOrganizing ? (
               <>
@@ -477,18 +546,18 @@ export default function DesktopView() {
                   animate={{ rotate: 360 }}
                   transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
                 >
-                  <Sparkles className="w-5 h-5" />
+                  <Sparkles className="w-4 h-4" />
                 </motion.div>
                 <span>정리 중...</span>
               </>
             ) : organized ? (
               <>
-                <CheckCircle2 className="w-5 h-5" />
+                <CheckCircle2 className="w-4 h-4" />
                 <span>정리 완료!</span>
               </>
             ) : (
               <>
-                <Sparkles className="w-5 h-5" />
+                <Sparkles className="w-4 h-4" />
                 <span>자동 정리</span>
               </>
             )}
@@ -496,36 +565,75 @@ export default function DesktopView() {
         </div>
       </div>
 
-      {/* Categories Overview - Clickable Filter */}
-      <div className="grid grid-cols-6 gap-4 mb-8">
-        {categories.map((cat, index) => {
-          const count = files.filter((f) => f.category === cat.id).length;
-          const isActive = activeTypeFilter === cat.id;
-          return (
-            <motion.div
-              key={cat.id}
-              onClick={() => setActiveTypeFilter(isActive ? null : cat.id)}
-              className={`p-4 rounded-xl glass border cursor-pointer transition-all ${
-                isActive
-                  ? "border-primary shadow-glow"
-                  : "border-border hover:border-primary/30"
-              }`}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: index * 0.1 }}
-              whileHover={{ scale: 1.02, y: -2 }}
-            >
-              <div
-                className="w-10 h-10 rounded-lg flex items-center justify-center mb-3"
-                style={{ backgroundColor: `${cat.color}20` }}
-              >
-                <cat.icon className="w-5 h-5" style={{ color: cat.color }} />
-              </div>
-              <p className="text-sm font-medium text-foreground">{cat.label}</p>
-              <p className="text-xs text-muted-foreground">{count}개 파일</p>
-            </motion.div>
-          );
-        })}
+      {/* Categories Overview - Clickable Filter with Horizontal Scroll */}
+      <div className="mb-8">
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '32px 1fr 32px',
+            gap: '8px',
+            alignItems: 'center',
+          }}
+        >
+          {/* Left Arrow */}
+          <button
+            type="button"
+            onClick={() => scrollCategories('left')}
+            disabled={!canScrollLeft}
+            className="w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center hover:bg-muted transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronLeft className="w-4 h-4 text-foreground" />
+          </button>
+
+          {/* Scrollable Container */}
+          <div
+            ref={categoriesScrollRef}
+            onScroll={checkScrollPosition}
+            className="overflow-x-auto pb-2"
+            style={{
+              scrollbarWidth: 'none',
+              msOverflowStyle: 'none',
+              scrollBehavior: 'smooth',
+            }}
+          >
+            <div className="flex gap-3" style={{ width: 'max-content' }}>
+              {categories.map((cat) => {
+                const count = files.filter((f) => f.category === cat.id).length;
+                const isActive = activeTypeFilter === cat.id;
+                return (
+                  <div
+                    key={cat.id}
+                    onClick={() => setActiveTypeFilter(isActive ? null : cat.id)}
+                    className={`w-[130px] p-3 rounded-xl glass border cursor-pointer transition-all hover:scale-[1.02] hover:-translate-y-0.5 ${
+                      isActive
+                        ? "border-primary shadow-glow"
+                        : "border-border hover:border-primary/30"
+                    }`}
+                  >
+                    <div
+                      className="w-9 h-9 rounded-lg flex items-center justify-center mb-2"
+                      style={{ backgroundColor: `${cat.color}20` }}
+                    >
+                      <cat.icon className="w-4 h-4" style={{ color: cat.color }} />
+                    </div>
+                    <p className="text-sm font-medium text-foreground">{cat.label}</p>
+                    <p className="text-xs text-muted-foreground">{count}개 파일</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right Arrow */}
+          <button
+            type="button"
+            onClick={() => scrollCategories('right')}
+            disabled={!canScrollRight}
+            className="w-8 h-8 rounded-full bg-secondary border border-border flex items-center justify-center hover:bg-muted transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            <ChevronRight className="w-4 h-4 text-foreground" />
+          </button>
+        </div>
       </div>
 
       {/* Files Grid */}

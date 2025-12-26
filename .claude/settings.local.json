@@ -19,7 +19,9 @@
       "Bash(git commit -m \"$\\(cat <<''EOF''\nImplement Tauri v2 backend with full desktop app functionality\n\n- Add Rust backend with file operations, scanner, organizer, renamer, analyzer\n- Add SQLite database for rules, history, settings storage\n- Add file watcher with notify crate for real-time monitoring\n- Add system tray with menu items \\(열기, 바탕화면 정리, 종료\\)\n- Add auto-update support with tauri-plugin-updater\n- Add GitHub Actions CI/CD for Windows/macOS builds\n- Integrate frontend components with Tauri IPC commands\n- Remove Lovable dependencies and update project metadata\n\n🤖 Generated with [Claude Code]\\(https://claude.com/claude-code\\)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git commit:*)",
       "Bash(git push:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(cat:*)",
+      "Bash(ls:*)"
     ]
   }
 }

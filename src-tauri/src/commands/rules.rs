@@ -834,9 +834,11 @@ pub fn preview_unified(
 pub fn execute_unified(
     db_state: State<DbPath>,
     source_path: String,
+    excluded_destinations: Option<Vec<String>>,
 ) -> Result<UnifiedOrganizeResult, String> {
     let db_path = db_state.0.clone();
     let previews = preview_unified_internal(&db_path, &source_path)?;
+    let excluded = excluded_destinations.unwrap_or_default();
 
     let mut files_moved = 0;
     let mut files_skipped = 0;
@@ -846,6 +848,11 @@ pub fn execute_unified(
     let source = PathBuf::from(&source_path);
 
     for preview in previews {
+        // Skip files in excluded destinations
+        if excluded.contains(&preview.destination) {
+            files_skipped += 1;
+            continue;
+        }
         let source_file = PathBuf::from(&preview.file.path);
 
         let dest_folder = if preview.match_type == "custom" {

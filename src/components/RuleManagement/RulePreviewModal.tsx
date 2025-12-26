@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -18,6 +18,8 @@ import {
   AlertCircle,
   CheckCircle2,
   ArrowRight,
+  ToggleLeft,
+  ToggleRight,
 } from "lucide-react";
 import { rulesApi } from "@/lib/tauri-api";
 import { UnifiedPreview, FileCategory, CATEGORY_INFO } from "@/lib/types";
@@ -26,15 +28,18 @@ interface RulePreviewModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   sourcePath: string;
-  onExecute: () => Promise<void>;
+  onExecute: (excludedDestinations?: string[]) => Promise<void>;
 }
 
 interface GroupedPreview {
   destination: string;
   matchType: "custom" | "default";
   ruleName?: string;
+  ruleId?: number;
+  category?: string;
   categoryLabel?: string;
   files: UnifiedPreview[];
+  enabled: boolean;
 }
 
 const getCategoryIcon = (category: FileCategory) => {
@@ -62,6 +67,7 @@ export default function RulePreviewModal({
   const [isExecuting, setIsExecuting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [disabledGroups, setDisabledGroups] = useState<Set<string>>(new Set());
 
   // Load preview data when modal opens
   useEffect(() => {
@@ -79,6 +85,8 @@ export default function RulePreviewModal({
       // Expand all groups by default
       const allDestinations = new Set(result.map((p) => p.destination));
       setExpandedGroups(allDestinations);
+      // Reset disabled groups
+      setDisabledGroups(new Set());
     } catch (err) {
       setError(err instanceof Error ? err.message : "미리보기 로드 실패");
     } finally {
@@ -97,10 +105,13 @@ export default function RulePreviewModal({
           destination: preview.destination,
           matchType: preview.matchType,
           ruleName: preview.rule?.name,
+          ruleId: preview.rule?.id,
+          category: preview.defaultRule?.category,
           categoryLabel: preview.defaultRule
             ? CATEGORY_INFO[preview.defaultRule.category as FileCategory]?.label
             : undefined,
           files: [],
+          enabled: true,
         });
       }
       groups.get(key)!.files.push(preview);
@@ -112,7 +123,13 @@ export default function RulePreviewModal({
     );
   }, [previews]);
 
+  // Calculate enabled files count
+  const enabledFiles = useMemo(() => {
+    return previews.filter((p) => !disabledGroups.has(p.destination));
+  }, [previews, disabledGroups]);
+
   const totalFiles = previews.length;
+  const enabledFilesCount = enabledFiles.length;
 
   const toggleGroup = (destination: string) => {
     setExpandedGroups((prev) => {
@@ -126,10 +143,25 @@ export default function RulePreviewModal({
     });
   };
 
+  const toggleGroupEnabled = useCallback((destination: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setDisabledGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(destination)) {
+        next.delete(destination);
+      } else {
+        next.add(destination);
+      }
+      return next;
+    });
+  }, []);
+
   const handleExecute = async () => {
     setIsExecuting(true);
     try {
-      await onExecute();
+      // Pass excluded destinations to the execute function
+      const excludedDestinationsList = Array.from(disabledGroups);
+      await onExecute(excludedDestinationsList.length > 0 ? excludedDestinationsList : undefined);
       onOpenChange(false);
     } catch (err) {
       setError(err instanceof Error ? err.message : "정리 실행 실패");
@@ -177,7 +209,9 @@ export default function RulePreviewModal({
                   <p className="text-sm text-muted-foreground">
                     {isLoading
                       ? "분석 중..."
-                      : `${totalFiles}개 파일이 정리됩니다`}
+                      : enabledFilesCount === totalFiles
+                        ? `${totalFiles}개 파일이 정리됩니다`
+                        : `${enabledFilesCount}개 파일이 정리됩니다 (${totalFiles - enabledFilesCount}개 제외)`}
                   </p>
                 </div>
               </div>
@@ -235,6 +269,7 @@ export default function RulePreviewModal({
                 <div className="space-y-3">
                   {groupedPreviews.map((group) => {
                     const isExpanded = expandedGroups.has(group.destination);
+                    const isEnabled = !disabledGroups.has(group.destination);
                     const CategoryIcon = group.files[0]?.file?.category
                       ? getCategoryIcon(
                           group.files[0].file.category as FileCategory
@@ -244,12 +279,20 @@ export default function RulePreviewModal({
                     return (
                       <div
                         key={group.destination}
-                        className="rounded-xl border border-border overflow-hidden"
+                        className={`rounded-xl border overflow-hidden transition-all ${
+                          isEnabled
+                            ? "border-border"
+                            : "border-border/50 opacity-50"
+                        }`}
                       >
                         {/* Group Header */}
-                        <button
+                        <div
                           onClick={() => toggleGroup(group.destination)}
-                          className="w-full flex items-center gap-3 p-4 bg-secondary/30 hover:bg-secondary/50 transition-colors text-left"
+                          className={`w-full flex items-center gap-3 p-4 transition-colors text-left cursor-pointer ${
+                            isEnabled
+                              ? "bg-secondary/30 hover:bg-secondary/50"
+                              : "bg-muted/20 hover:bg-muted/30"
+                          }`}
                         >
                           <motion.div
                             animate={{ rotate: isExpanded ? 90 : 0 }}
@@ -284,7 +327,7 @@ export default function RulePreviewModal({
                           </div>
                           <div className="flex-1 min-w-0">
                             <div className="flex items-center gap-2">
-                              <span className="font-medium text-foreground truncate">
+                              <span className={`font-medium truncate ${isEnabled ? "text-foreground" : "text-muted-foreground line-through"}`}>
                                 {group.matchType === "custom"
                                   ? group.ruleName
                                   : group.categoryLabel || "기타"}
@@ -308,10 +351,24 @@ export default function RulePreviewModal({
                               </span>
                             </div>
                           </div>
-                          <span className="text-sm font-medium text-muted-foreground">
+                          <span className="text-sm font-medium text-muted-foreground mr-2">
                             {group.files.length}개
                           </span>
-                        </button>
+                          {/* Toggle Button */}
+                          <button
+                            onClick={(e) => toggleGroupEnabled(group.destination, e)}
+                            className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
+                              isEnabled ? "bg-primary" : "bg-muted"
+                            }`}
+                            title={isEnabled ? "이 규칙 제외" : "이 규칙 포함"}
+                          >
+                            <motion.div
+                              className="w-4 h-4 bg-white rounded-full shadow-sm"
+                              animate={{ x: isEnabled ? 22 : 2 }}
+                              transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                            />
+                          </button>
+                        </div>
 
                         {/* File List */}
                         <AnimatePresence>

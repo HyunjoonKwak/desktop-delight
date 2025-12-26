@@ -47,7 +47,7 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
   }, []);
 
   return (
-    <aside className="w-72 h-screen glass border-r border-border flex flex-col">
+    <aside className="w-72 min-w-[288px] flex-shrink-0 h-screen glass border-r border-border flex flex-col">
       {/* Logo */}
       <div className="p-6 border-b border-border">
         <div className="flex items-center gap-3">

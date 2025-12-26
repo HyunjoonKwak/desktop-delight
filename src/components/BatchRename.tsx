@@ -12,8 +12,10 @@ import {
   AlertCircle,
   FolderOpen,
   Loader2,
+  Folder,
+  Plus,
 } from "lucide-react";
-import { fileApi, renamerApi, isTauri } from "@/lib/tauri-api";
+import { fileApi, renamerApi, dialogApi, isTauri } from "@/lib/tauri-api";
 import type { FileInfo, RenameRule, RenamePreview } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
@@ -35,15 +37,24 @@ export default function BatchRename() {
   const [isLoading, setIsLoading] = useState(false);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renamed, setRenamed] = useState(false);
+  const [currentPath, setCurrentPath] = useState<string>("");
   const { toast } = useToast();
 
-  // Load desktop files
-  const loadFiles = useCallback(async () => {
+  // Load files from a specific path
+  const loadFiles = useCallback(async (path?: string) => {
     setIsLoading(true);
     try {
       if (isTauri()) {
-        const desktopFiles = await fileApi.scanDesktop();
-        const fileOnly = desktopFiles.filter(f => !f.isDirectory);
+        let filesResult: FileInfo[];
+        if (path) {
+          filesResult = await fileApi.scanDirectory(path, false, false);
+          setCurrentPath(path);
+        } else {
+          filesResult = await fileApi.scanDesktop();
+          const desktopPath = await fileApi.getDesktopPath();
+          setCurrentPath(desktopPath);
+        }
+        const fileOnly = filesResult.filter(f => !f.isDirectory);
         setFiles(fileOnly);
         // Auto-select first 5 files
         setSelectedFiles(fileOnly.slice(0, 5).map(f => f.path));
@@ -59,6 +70,23 @@ export default function BatchRename() {
       setIsLoading(false);
     }
   }, [toast]);
+
+  // Open folder picker
+  const handleSelectFolder = async () => {
+    try {
+      const selectedPath = await dialogApi.pickFolder("파일 이름을 변경할 폴더 선택");
+      if (selectedPath) {
+        await loadFiles(selectedPath);
+      }
+    } catch (error) {
+      console.error("Failed to pick folder:", error);
+      toast({
+        title: "폴더 선택 실패",
+        description: String(error),
+        variant: "destructive",
+      });
+    }
+  };
 
   useEffect(() => {
     loadFiles();
@@ -293,39 +321,90 @@ export default function BatchRename() {
               <label className="text-sm font-medium text-muted-foreground">
                 파일 선택 ({selectedFiles.length}/{files.length})
               </label>
-              <button
-                onClick={loadFiles}
-                disabled={isLoading}
-                className="text-xs text-primary hover:underline flex items-center gap-1"
-              >
-                <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-                새로고침
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleSelectFolder}
+                  disabled={isLoading}
+                  className="text-xs text-primary hover:underline flex items-center gap-1"
+                >
+                  <Folder className="w-3 h-3" />
+                  폴더 선택
+                </button>
+                <button
+                  onClick={() => loadFiles(currentPath)}
+                  disabled={isLoading}
+                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+                >
+                  <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
+                  새로고침
+                </button>
+              </div>
             </div>
+
+            {/* Current Path */}
+            {currentPath && (
+              <div className="mb-2 px-3 py-2 bg-secondary/30 rounded-lg">
+                <p className="text-xs text-muted-foreground truncate" title={currentPath}>
+                  📁 {currentPath.split('/').slice(-2).join('/')}
+                </p>
+              </div>
+            )}
+
             <div className="max-h-[200px] overflow-auto space-y-1 bg-secondary/50 rounded-xl p-2">
               {isLoading ? (
                 <div className="flex items-center justify-center py-4">
                   <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
                 </div>
               ) : files.length === 0 ? (
-                <p className="text-xs text-muted-foreground text-center py-4">
-                  {isTauri() ? "바탕화면에 파일이 없습니다" : "Tauri 환경에서만 사용 가능합니다"}
-                </p>
+                <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
+                  <FolderOpen className="w-8 h-8 mb-2 opacity-50" />
+                  <p className="text-xs text-center mb-2">
+                    {isTauri() ? "폴더에 파일이 없습니다" : "Tauri 환경에서만 사용 가능합니다"}
+                  </p>
+                  {isTauri() && (
+                    <motion.button
+                      onClick={handleSelectFolder}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:opacity-90"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <Plus className="w-3 h-3" />
+                      폴더 선택하기
+                    </motion.button>
+                  )}
+                </div>
               ) : (
-                files.map((file) => (
-                  <label
-                    key={file.path}
-                    className="flex items-center gap-2 p-2 rounded-lg hover:bg-secondary cursor-pointer"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedFiles.includes(file.path)}
-                      onChange={() => toggleFileSelection(file.path)}
-                      className="rounded border-muted-foreground"
-                    />
-                    <span className="text-xs text-foreground truncate">{file.name}</span>
-                  </label>
-                ))
+                <>
+                  <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border/50">
+                    <button
+                      onClick={() => setSelectedFiles(files.map(f => f.path))}
+                      className="text-xs text-primary hover:underline"
+                    >
+                      전체 선택
+                    </button>
+                    <span className="text-muted-foreground">|</span>
+                    <button
+                      onClick={() => setSelectedFiles([])}
+                      className="text-xs text-muted-foreground hover:text-foreground"
+                    >
+                      선택 해제
+                    </button>
+                  </div>
+                  {files.map((file) => (
+                    <label
+                      key={file.path}
+                      className="flex items-center gap-2 p-2 rounded-lg hover:bg-secondary cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedFiles.includes(file.path)}
+                        onChange={() => toggleFileSelection(file.path)}
+                        className="rounded border-muted-foreground"
+                      />
+                      <span className="text-xs text-foreground truncate">{file.name}</span>
+                    </label>
+                  ))}
+                </>
               )}
             </div>
           </div>
