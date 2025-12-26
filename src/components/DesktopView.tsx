@@ -16,10 +16,12 @@ import {
   ArrowDown,
   X,
   History,
+  Settings2,
 } from "lucide-react";
 import FileCard from "./FileCard";
 import HistoryPanel, { HistoryItem } from "./HistoryPanel";
 import FileDetailPanel from "./FileDetailPanel";
+import OrganizeRulesModal from "./OrganizeRulesModal";
 import { useToast } from "@/hooks/use-toast";
 
 type FileType = "image" | "document" | "video" | "audio" | "archive" | "code";
@@ -64,6 +66,7 @@ export default function DesktopView() {
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [selectedFileForDetail, setSelectedFileForDetail] = useState<number | null>(null);
   const { toast } = useToast();
@@ -221,6 +224,17 @@ export default function DesktopView() {
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Rules Button */}
+          <motion.button
+            onClick={() => setIsRulesModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <Settings2 className="w-5 h-5" />
+            <span>정리 규칙</span>
+          </motion.button>
+
           {/* History Button */}
           <motion.button
             onClick={() => setIsHistoryOpen(true)}
@@ -499,6 +513,23 @@ export default function DesktopView() {
         file={detailFile}
         isOpen={selectedFileForDetail !== null}
         onClose={() => setSelectedFileForDetail(null)}
+      />
+
+      {/* Organize Rules Modal */}
+      <OrganizeRulesModal
+        isOpen={isRulesModalOpen}
+        onClose={() => setIsRulesModalOpen(false)}
+        onSave={(rules) => {
+          toast({
+            title: "규칙 저장 완료",
+            description: `${rules.filter((r) => r.enabled).length}개의 규칙이 활성화되었습니다.`,
+          });
+          addToHistory({
+            type: "organize",
+            description: "정리 규칙 수정",
+            details: `${rules.length}개의 규칙을 설정했습니다`,
+          });
+        }}
       />
     </div>
   );
