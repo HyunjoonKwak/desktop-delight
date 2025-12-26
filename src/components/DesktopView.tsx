@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MonitorUp,
@@ -11,18 +11,37 @@ import {
   Archive,
   Play,
   CheckCircle2,
+  Search,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  X,
 } from "lucide-react";
 import FileCard from "./FileCard";
 
-const mockDesktopFiles = [
-  { id: 1, name: "프로젝트_최종.psd", type: "image" as const, size: "245MB", date: "오늘" },
-  { id: 2, name: "회의록_2024.docx", type: "document" as const, size: "1.2MB", date: "어제" },
-  { id: 3, name: "홍보영상.mp4", type: "video" as const, size: "1.8GB", date: "3일 전" },
-  { id: 4, name: "배경음악.mp3", type: "audio" as const, size: "8.5MB", date: "1주 전" },
-  { id: 5, name: "자료.zip", type: "archive" as const, size: "156MB", date: "2주 전" },
-  { id: 6, name: "스크린샷_001.png", type: "image" as const, size: "2.1MB", date: "오늘" },
-  { id: 7, name: "계약서.pdf", type: "document" as const, size: "890KB", date: "오늘" },
-  { id: 8, name: "index.tsx", type: "code" as const, size: "12KB", date: "어제" },
+type FileType = "image" | "document" | "video" | "audio" | "archive" | "code";
+type SortKey = "name" | "date" | "size";
+type SortOrder = "asc" | "desc";
+
+interface MockFile {
+  id: number;
+  name: string;
+  type: FileType;
+  size: string;
+  sizeBytes: number;
+  date: string;
+  dateTimestamp: number;
+}
+
+const mockDesktopFiles: MockFile[] = [
+  { id: 1, name: "프로젝트_최종.psd", type: "image", size: "245MB", sizeBytes: 245000000, date: "오늘", dateTimestamp: Date.now() },
+  { id: 2, name: "회의록_2024.docx", type: "document", size: "1.2MB", sizeBytes: 1200000, date: "어제", dateTimestamp: Date.now() - 86400000 },
+  { id: 3, name: "홍보영상.mp4", type: "video", size: "1.8GB", sizeBytes: 1800000000, date: "3일 전", dateTimestamp: Date.now() - 259200000 },
+  { id: 4, name: "배경음악.mp3", type: "audio", size: "8.5MB", sizeBytes: 8500000, date: "1주 전", dateTimestamp: Date.now() - 604800000 },
+  { id: 5, name: "자료.zip", type: "archive", size: "156MB", sizeBytes: 156000000, date: "2주 전", dateTimestamp: Date.now() - 1209600000 },
+  { id: 6, name: "스크린샷_001.png", type: "image", size: "2.1MB", sizeBytes: 2100000, date: "오늘", dateTimestamp: Date.now() - 3600000 },
+  { id: 7, name: "계약서.pdf", type: "document", size: "890KB", sizeBytes: 890000, date: "오늘", dateTimestamp: Date.now() - 7200000 },
+  { id: 8, name: "index.tsx", type: "code", size: "12KB", sizeBytes: 12000, date: "어제", dateTimestamp: Date.now() - 100800000 },
 ];
 
 const categories = [
@@ -37,6 +56,63 @@ export default function DesktopView() {
   const [selectedFiles, setSelectedFiles] = useState<number[]>([]);
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [organized, setOrganized] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+  const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(null);
+
+  const filteredAndSortedFiles = useMemo(() => {
+    let files = [...mockDesktopFiles];
+
+    // Filter by search query
+    if (searchQuery) {
+      files = files.filter((file) =>
+        file.name.toLowerCase().includes(searchQuery.toLowerCase())
+      );
+    }
+
+    // Filter by type
+    if (activeTypeFilter) {
+      files = files.filter((file) => file.type === activeTypeFilter);
+    }
+
+    // Sort files
+    files.sort((a, b) => {
+      let comparison = 0;
+      switch (sortKey) {
+        case "name":
+          comparison = a.name.localeCompare(b.name, "ko");
+          break;
+        case "date":
+          comparison = b.dateTimestamp - a.dateTimestamp;
+          break;
+        case "size":
+          comparison = b.sizeBytes - a.sizeBytes;
+          break;
+      }
+      return sortOrder === "asc" ? comparison : -comparison;
+    });
+
+    return files;
+  }, [searchQuery, sortKey, sortOrder, activeTypeFilter]);
+
+  const toggleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortOrder("asc");
+    }
+  };
+
+  const SortIcon = ({ keyName }: { keyName: SortKey }) => {
+    if (sortKey !== keyName) return <ArrowUpDown className="w-3.5 h-3.5" />;
+    return sortOrder === "asc" ? (
+      <ArrowUp className="w-3.5 h-3.5" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5" />
+    );
+  };
 
   const toggleSelect = (id: number) => {
     setSelectedFiles((prev) =>
@@ -50,6 +126,13 @@ export default function DesktopView() {
       setIsOrganizing(false);
       setOrganized(true);
     }, 2000);
+  };
+
+  const clearFilters = () => {
+    setSearchQuery("");
+    setActiveTypeFilter(null);
+    setSortKey("name");
+    setSortOrder("asc");
   };
 
   return (
@@ -105,14 +188,20 @@ export default function DesktopView() {
         </motion.button>
       </div>
 
-      {/* Categories Overview */}
+      {/* Categories Overview - Clickable Filter */}
       <div className="grid grid-cols-5 gap-4 mb-8">
         {categories.map((cat, index) => {
           const count = mockDesktopFiles.filter((f) => f.type === cat.id).length;
+          const isActive = activeTypeFilter === cat.id;
           return (
             <motion.div
               key={cat.id}
-              className="p-4 rounded-xl glass border border-border hover:border-primary/30 cursor-pointer transition-all"
+              onClick={() => setActiveTypeFilter(isActive ? null : cat.id)}
+              className={`p-4 rounded-xl glass border cursor-pointer transition-all ${
+                isActive
+                  ? "border-primary shadow-glow"
+                  : "border-border hover:border-primary/30"
+              }`}
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: index * 0.1 }}
@@ -133,14 +222,91 @@ export default function DesktopView() {
 
       {/* Files Grid */}
       <div className="glass rounded-2xl p-6 border border-border">
+        {/* Search and Sort Bar */}
+        <div className="flex items-center gap-4 mb-6">
+          {/* Search Input */}
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+            <input
+              type="text"
+              placeholder="파일 검색..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-10 py-2.5 bg-secondary rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-muted transition-colors"
+              >
+                <X className="w-3.5 h-3.5 text-muted-foreground" />
+              </button>
+            )}
+          </div>
+
+          {/* Sort Buttons */}
+          <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
+            <button
+              onClick={() => toggleSort("name")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                sortKey === "name"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+            >
+              <span>이름</span>
+              <SortIcon keyName="name" />
+            </button>
+            <button
+              onClick={() => toggleSort("date")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                sortKey === "date"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+            >
+              <span>날짜</span>
+              <SortIcon keyName="date" />
+            </button>
+            <button
+              onClick={() => toggleSort("size")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                sortKey === "size"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+            >
+              <span>크기</span>
+              <SortIcon keyName="size" />
+            </button>
+          </div>
+
+          {/* Clear Filters */}
+          {(searchQuery || activeTypeFilter) && (
+            <motion.button
+              onClick={clearFilters}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+            >
+              <X className="w-3.5 h-3.5" />
+              필터 초기화
+            </motion.button>
+          )}
+        </div>
+
+        {/* Header */}
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-lg font-medium text-foreground flex items-center gap-2">
             <FolderOpen className="w-5 h-5 text-primary" />
             바탕화면 파일
+            <span className="text-sm text-muted-foreground font-normal">
+              ({filteredAndSortedFiles.length}개)
+            </span>
           </h2>
           <div className="flex gap-2">
             <button
-              onClick={() => setSelectedFiles(mockDesktopFiles.map((f) => f.id))}
+              onClick={() => setSelectedFiles(filteredAndSortedFiles.map((f) => f.id))}
               className="px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors"
             >
               전체 선택
@@ -154,12 +320,13 @@ export default function DesktopView() {
           </div>
         </div>
 
-        <AnimatePresence>
+        <AnimatePresence mode="wait">
           {organized ? (
             <motion.div
               className="grid grid-cols-5 gap-4"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
+              key="organized"
             >
               {categories.map((cat) => {
                 const files = mockDesktopFiles.filter((f) => f.type === cat.id);
@@ -192,9 +359,30 @@ export default function DesktopView() {
                 );
               })}
             </motion.div>
+          ) : filteredAndSortedFiles.length === 0 ? (
+            <motion.div
+              className="flex flex-col items-center justify-center py-16 text-muted-foreground"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              key="empty"
+            >
+              <Search className="w-12 h-12 mb-4 opacity-50" />
+              <p className="text-sm">검색 결과가 없습니다</p>
+              <button
+                onClick={clearFilters}
+                className="mt-2 text-xs text-primary hover:underline"
+              >
+                필터 초기화
+              </button>
+            </motion.div>
           ) : (
-            <div className="grid grid-cols-4 gap-4">
-              {mockDesktopFiles.map((file) => (
+            <motion.div
+              className="grid grid-cols-4 gap-4"
+              key="files"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              {filteredAndSortedFiles.map((file) => (
                 <FileCard
                   key={file.id}
                   name={file.name}
@@ -205,7 +393,7 @@ export default function DesktopView() {
                   onClick={() => toggleSelect(file.id)}
                 />
               ))}
-            </div>
+            </motion.div>
           )}
         </AnimatePresence>
       </div>
