@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import FileCard from "./FileCard";
 import HistoryPanel, { HistoryItem } from "./HistoryPanel";
+import FileDetailPanel from "./FileDetailPanel";
 import { useToast } from "@/hooks/use-toast";
 
 type FileType = "image" | "document" | "video" | "audio" | "archive" | "code";
@@ -64,7 +65,12 @@ export default function DesktopView() {
   const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(null);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [selectedFileForDetail, setSelectedFileForDetail] = useState<number | null>(null);
   const { toast } = useToast();
+
+  const detailFile = selectedFileForDetail
+    ? mockDesktopFiles.find((f) => f.id === selectedFileForDetail) || null
+    : null;
 
   const addToHistory = (item: Omit<HistoryItem, "id" | "timestamp">) => {
     const newItem: HistoryItem = {
@@ -136,10 +142,14 @@ export default function DesktopView() {
     );
   };
 
-  const toggleSelect = (id: number) => {
-    setSelectedFiles((prev) =>
-      prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]
-    );
+  const toggleSelect = (id: number, isDoubleClick?: boolean) => {
+    if (isDoubleClick) {
+      setSelectedFileForDetail(id);
+    } else {
+      setSelectedFiles((prev) =>
+        prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]
+      );
+    }
   };
 
   const handleOrganize = () => {
@@ -467,6 +477,7 @@ export default function DesktopView() {
                   date={file.date}
                   selected={selectedFiles.includes(file.id)}
                   onClick={() => toggleSelect(file.id)}
+                  onDoubleClick={() => toggleSelect(file.id, true)}
                 />
               ))}
             </motion.div>
@@ -481,6 +492,13 @@ export default function DesktopView() {
         history={history}
         onUndo={handleUndo}
         onClearHistory={handleClearHistory}
+      />
+
+      {/* File Detail Panel */}
+      <FileDetailPanel
+        file={detailFile}
+        isOpen={selectedFileForDetail !== null}
+        onClose={() => setSelectedFileForDetail(null)}
       />
     </div>
   );
