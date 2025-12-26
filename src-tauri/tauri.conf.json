@@ -1,7 +1,7 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Desktop Organizer Pro",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "identifier": "com.desktoporganizer.pro",
   "build": {
     "frontendDist": "../dist",
@@ -40,8 +40,9 @@
     "shortDescription": "데스크톱 파일 정리 프로그램",
     "longDescription": "Windows와 macOS에서 바탕화면 파일을 자동으로 분류하고 정리하는 데스크톱 애플리케이션",
     "windows": {
-      "wix": {
-        "language": "ko-KR"
+      "nsis": {
+        "languages": ["Korean", "English"],
+        "displayLanguageSelector": true
       }
     },
     "macOS": {
