@@ -594,3 +594,501 @@ fn get_time(metadata: &Option<fs::Metadata>, created: bool) -> String {
         })
         .unwrap_or_else(|| "Unknown".to_string())
 }
+
+// ============================================================================
+// Default Rules (기본 카테고리 규칙)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DefaultRule {
+    pub id: i64,
+    pub category: String,
+    pub enabled: bool,
+    pub destination: String,
+    pub create_date_subfolder: bool,
+    pub priority: i32,
+}
+
+/// Get default category rules
+#[tauri::command]
+pub fn get_default_rules(db_state: State<DbPath>) -> Result<Vec<DefaultRule>, String> {
+    let db_path = &db_state.0;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Check if default_rules table exists, if not create it
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS default_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            destination TEXT NOT NULL,
+            create_date_subfolder INTEGER DEFAULT 0,
+            priority INTEGER DEFAULT 0
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Add priority column if it doesn't exist (migration for existing DBs)
+    let _ = conn.execute("ALTER TABLE default_rules ADD COLUMN priority INTEGER DEFAULT 0", []);
+
+    // Get existing rules ordered by priority
+    let mut stmt = conn
+        .prepare("SELECT id, category, enabled, destination, create_date_subfolder, COALESCE(priority, 0) FROM default_rules ORDER BY priority ASC")
+        .map_err(|e| e.to_string())?;
+
+    let rules: Vec<DefaultRule> = stmt
+        .query_map([], |row| {
+            Ok(DefaultRule {
+                id: row.get(0)?,
+                category: row.get(1)?,
+                enabled: row.get::<_, i32>(2)? != 0,
+                destination: row.get(3)?,
+                create_date_subfolder: row.get::<_, i32>(4)? != 0,
+                priority: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // If no rules exist, create defaults
+    if rules.is_empty() {
+        let default_categories = [
+            ("images", "Images", 0),
+            ("documents", "Documents", 1),
+            ("videos", "Videos", 2),
+            ("music", "Music", 3),
+            ("archives", "Archives", 4),
+            ("installers", "Installers", 5),
+            ("code", "Code", 6),
+            ("others", "Others", 7),
+        ];
+
+        for (category, folder, priority) in default_categories {
+            conn.execute(
+                "INSERT OR IGNORE INTO default_rules (category, enabled, destination, create_date_subfolder, priority) VALUES (?1, 1, ?2, 0, ?3)",
+                rusqlite::params![category, folder, priority],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        // Re-fetch after insert
+        return get_default_rules(db_state);
+    }
+
+    Ok(rules)
+}
+
+/// Save a default rule
+#[tauri::command]
+pub fn save_default_rule(db_state: State<DbPath>, rule: DefaultRule) -> Result<DefaultRule, String> {
+    let db_path = &db_state.0;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    conn.execute(
+        "UPDATE default_rules SET enabled = ?1, destination = ?2, create_date_subfolder = ?3, priority = ?4 WHERE id = ?5",
+        rusqlite::params![
+            rule.enabled as i32,
+            rule.destination,
+            rule.create_date_subfolder as i32,
+            rule.priority,
+            rule.id,
+        ],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(rule)
+}
+
+// ============================================================================
+// Unified Organization (통합 정리)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifiedPreview {
+    pub file: FileInfo,
+    pub match_type: String, // "custom" or "default"
+    pub rule: Option<Rule>,
+    pub default_rule: Option<DefaultRule>,
+    pub action: String,
+    pub destination: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UnifiedOrganizeResult {
+    pub success: bool,
+    pub files_moved: usize,
+    pub files_skipped: usize,
+    pub errors: Vec<String>,
+    pub history_id: i64,
+}
+
+/// Preview unified organization (custom rules first, then default category rules)
+#[tauri::command]
+pub fn preview_unified(
+    db_state: State<DbPath>,
+    source_path: String,
+) -> Result<Vec<UnifiedPreview>, String> {
+    let db_path = &db_state.0;
+
+    // Get custom rules
+    let custom_rules = get_rules_internal(db_path)?;
+    let enabled_custom_rules: Vec<Rule> = custom_rules.into_iter().filter(|r| r.enabled).collect();
+
+    // Get default rules
+    let default_rules = get_default_rules_internal(db_path)?;
+    let enabled_default_rules: Vec<DefaultRule> = default_rules.into_iter().filter(|r| r.enabled).collect();
+
+    let source = PathBuf::from(&source_path);
+    if !source.exists() {
+        return Err("경로가 존재하지 않습니다".to_string());
+    }
+
+    let mut previews: Vec<UnifiedPreview> = Vec::new();
+    let entries = fs::read_dir(&source).map_err(|e| e.to_string())?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        if path.is_dir() {
+            continue;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_default();
+
+        let metadata = fs::metadata(&path).ok();
+        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let category = classify_extension(&extension);
+
+        let file_info = FileInfo {
+            path: path.to_string_lossy().to_string(),
+            name: file_name.clone(),
+            extension: extension.clone(),
+            size,
+            size_formatted: format_size(size),
+            created_at: get_time(&metadata, true),
+            modified_at: get_time(&metadata, false),
+            is_directory: false,
+            is_hidden: file_name.starts_with('.'),
+            category: category.clone(),
+        };
+
+        // Try custom rules first
+        let mut matched = false;
+        for rule in &enabled_custom_rules {
+            if evaluate_rule(&file_info, rule) {
+                let dest = rule.action_destination.clone().unwrap_or_default();
+                previews.push(UnifiedPreview {
+                    file: file_info.clone(),
+                    match_type: "custom".to_string(),
+                    rule: Some(rule.clone()),
+                    default_rule: None,
+                    action: format_action_preview(rule, &file_info),
+                    destination: dest,
+                });
+                matched = true;
+                break;
+            }
+        }
+
+        // If no custom rule matched, try default category rules
+        if !matched {
+            let category_str = format!("{:?}", category).to_lowercase();
+            if let Some(default_rule) = enabled_default_rules.iter().find(|r| r.category == category_str) {
+                let dest_path = source.join(&default_rule.destination);
+                previews.push(UnifiedPreview {
+                    file: file_info.clone(),
+                    match_type: "default".to_string(),
+                    rule: None,
+                    default_rule: Some(default_rule.clone()),
+                    action: format!("이동: {} → {}", file_info.name, default_rule.destination),
+                    destination: dest_path.to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(previews)
+}
+
+/// Execute unified organization
+#[tauri::command]
+pub fn execute_unified(
+    db_state: State<DbPath>,
+    source_path: String,
+) -> Result<UnifiedOrganizeResult, String> {
+    let db_path = db_state.0.clone();
+    let previews = preview_unified_internal(&db_path, &source_path)?;
+
+    let mut files_moved = 0;
+    let mut files_skipped = 0;
+    let mut errors: Vec<String> = Vec::new();
+    let mut move_details: Vec<(String, String)> = Vec::new();
+
+    let source = PathBuf::from(&source_path);
+
+    for preview in previews {
+        let source_file = PathBuf::from(&preview.file.path);
+
+        let dest_folder = if preview.match_type == "custom" {
+            if let Some(rule) = &preview.rule {
+                let mut dest = PathBuf::from(rule.action_destination.clone().unwrap_or_default());
+                if rule.create_date_subfolder && preview.file.modified_at.len() >= 7 {
+                    dest = dest.join(&preview.file.modified_at[..7]);
+                }
+                dest
+            } else {
+                continue;
+            }
+        } else {
+            if let Some(default_rule) = &preview.default_rule {
+                let mut dest = source.join(&default_rule.destination);
+                if default_rule.create_date_subfolder && preview.file.modified_at.len() >= 7 {
+                    dest = dest.join(&preview.file.modified_at[..7]);
+                }
+                dest
+            } else {
+                continue;
+            }
+        };
+
+        // Create destination folder
+        if let Err(e) = fs::create_dir_all(&dest_folder) {
+            errors.push(format!("폴더 생성 실패 {}: {}", dest_folder.display(), e));
+            files_skipped += 1;
+            continue;
+        }
+
+        let dest_file = dest_folder.join(&preview.file.name);
+
+        // Move file
+        match fs::rename(&source_file, &dest_file) {
+            Ok(_) => {
+                move_details.push((
+                    preview.file.path.clone(),
+                    dest_file.to_string_lossy().to_string(),
+                ));
+                files_moved += 1;
+            }
+            Err(_) => {
+                // Try copy + delete for cross-device moves
+                match fs::copy(&source_file, &dest_file) {
+                    Ok(_) => {
+                        if let Err(e) = fs::remove_file(&source_file) {
+                            errors.push(format!("원본 삭제 실패 {}: {}", preview.file.name, e));
+                        }
+                        move_details.push((
+                            preview.file.path.clone(),
+                            dest_file.to_string_lossy().to_string(),
+                        ));
+                        files_moved += 1;
+                    }
+                    Err(e) => {
+                        errors.push(format!("파일 이동 실패 {}: {}", preview.file.name, e));
+                        files_skipped += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // Record history
+    let details_json = serde_json::to_string(&move_details).unwrap_or_default();
+    let history_id = crate::database::add_history(
+        &db_path,
+        "organize",
+        &format!("통합 정리: {}개 파일 이동", files_moved),
+        &details_json,
+    )
+    .unwrap_or(-1);
+
+    Ok(UnifiedOrganizeResult {
+        success: errors.is_empty(),
+        files_moved,
+        files_skipped,
+        errors,
+        history_id,
+    })
+}
+
+/// Internal function to get default rules without State wrapper
+fn get_default_rules_internal(db_path: &PathBuf) -> Result<Vec<DefaultRule>, String> {
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Ensure table exists
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS default_rules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            category TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            destination TEXT NOT NULL,
+            create_date_subfolder INTEGER DEFAULT 0,
+            priority INTEGER DEFAULT 0
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Add priority column if it doesn't exist (migration for existing DBs)
+    let _ = conn.execute("ALTER TABLE default_rules ADD COLUMN priority INTEGER DEFAULT 0", []);
+
+    let mut stmt = conn
+        .prepare("SELECT id, category, enabled, destination, create_date_subfolder, COALESCE(priority, 0) FROM default_rules ORDER BY priority ASC")
+        .map_err(|e| e.to_string())?;
+
+    let rules: Vec<DefaultRule> = stmt
+        .query_map([], |row| {
+            Ok(DefaultRule {
+                id: row.get(0)?,
+                category: row.get(1)?,
+                enabled: row.get::<_, i32>(2)? != 0,
+                destination: row.get(3)?,
+                create_date_subfolder: row.get::<_, i32>(4)? != 0,
+                priority: row.get(5)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // If no rules exist, create defaults
+    if rules.is_empty() {
+        let default_categories = [
+            ("images", "Images", 0),
+            ("documents", "Documents", 1),
+            ("videos", "Videos", 2),
+            ("music", "Music", 3),
+            ("archives", "Archives", 4),
+            ("installers", "Installers", 5),
+            ("code", "Code", 6),
+            ("others", "Others", 7),
+        ];
+
+        for (category, folder, priority) in default_categories {
+            conn.execute(
+                "INSERT OR IGNORE INTO default_rules (category, enabled, destination, create_date_subfolder, priority) VALUES (?1, 1, ?2, 0, ?3)",
+                rusqlite::params![category, folder, priority],
+            )
+            .map_err(|e| e.to_string())?;
+        }
+
+        // Re-fetch after insert
+        return get_default_rules_internal(db_path);
+    }
+
+    Ok(rules)
+}
+
+/// Internal function to preview unified without State wrapper
+fn preview_unified_internal(db_path: &PathBuf, source_path: &str) -> Result<Vec<UnifiedPreview>, String> {
+    // Get custom rules
+    let custom_rules = get_rules_internal(db_path)?;
+    let enabled_custom_rules: Vec<Rule> = custom_rules.into_iter().filter(|r| r.enabled).collect();
+
+    // Get default rules
+    let default_rules = get_default_rules_internal(db_path)?;
+    let enabled_default_rules: Vec<DefaultRule> = default_rules.into_iter().filter(|r| r.enabled).collect();
+
+    let source = PathBuf::from(source_path);
+    if !source.exists() {
+        return Err("경로가 존재하지 않습니다".to_string());
+    }
+
+    let mut previews: Vec<UnifiedPreview> = Vec::new();
+    let entries = fs::read_dir(&source).map_err(|e| e.to_string())?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+
+        if path.is_dir() {
+            continue;
+        }
+
+        let file_name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        if file_name.starts_with('.') {
+            continue;
+        }
+
+        let extension = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| format!(".{}", e.to_lowercase()))
+            .unwrap_or_default();
+
+        let metadata = fs::metadata(&path).ok();
+        let size = metadata.as_ref().map(|m| m.len()).unwrap_or(0);
+        let category = classify_extension(&extension);
+
+        let file_info = FileInfo {
+            path: path.to_string_lossy().to_string(),
+            name: file_name.clone(),
+            extension: extension.clone(),
+            size,
+            size_formatted: format_size(size),
+            created_at: get_time(&metadata, true),
+            modified_at: get_time(&metadata, false),
+            is_directory: false,
+            is_hidden: file_name.starts_with('.'),
+            category: category.clone(),
+        };
+
+        // Try custom rules first
+        let mut matched = false;
+        for rule in &enabled_custom_rules {
+            if evaluate_rule(&file_info, rule) {
+                let dest = rule.action_destination.clone().unwrap_or_default();
+                previews.push(UnifiedPreview {
+                    file: file_info.clone(),
+                    match_type: "custom".to_string(),
+                    rule: Some(rule.clone()),
+                    default_rule: None,
+                    action: format_action_preview(rule, &file_info),
+                    destination: dest,
+                });
+                matched = true;
+                break;
+            }
+        }
+
+        // If no custom rule matched, try default category rules
+        if !matched {
+            let category_str = format!("{:?}", category).to_lowercase();
+            if let Some(default_rule) = enabled_default_rules.iter().find(|r| r.category == category_str) {
+                let dest_path = source.join(&default_rule.destination);
+                previews.push(UnifiedPreview {
+                    file: file_info.clone(),
+                    match_type: "default".to_string(),
+                    rule: None,
+                    default_rule: Some(default_rule.clone()),
+                    action: format!("이동: {} → {}", file_info.name, default_rule.destination),
+                    destination: dest_path.to_string_lossy().to_string(),
+                });
+            }
+        }
+    }
+
+    Ok(previews)
+}

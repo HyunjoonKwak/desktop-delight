@@ -19,6 +19,10 @@ import {
   HardDrive,
   Loader2,
   File,
+  Home,
+  Monitor,
+  Download,
+  FileImage,
 } from "lucide-react";
 import { fileApi, analyzerApi, isTauri, formatFileSize } from "@/lib/tauri-api";
 import type { FileInfo, FolderTreeNode, FileCategory } from "@/lib/types";
@@ -31,6 +35,11 @@ interface FolderItem {
   children?: FolderItem[];
   files?: number;
   isExpanded?: boolean;
+}
+
+interface QuickAccessFolder {
+  name: string;
+  path: string;
 }
 
 // Map category to icon
@@ -127,26 +136,52 @@ function FolderTreeItem({
   );
 }
 
+// Icon mapping for quick access folders
+const quickAccessIcons: Record<string, typeof Home> = {
+  "홈": Home,
+  "바탕화면": Monitor,
+  "문서": FileText,
+  "다운로드": Download,
+  "사진": FileImage,
+  "동영상": Video,
+  "음악": Music,
+};
+
 export default function FolderManager() {
   const [folders, setFolders] = useState<FolderItem[]>([]);
+  const [quickAccessFolders, setQuickAccessFolders] = useState<QuickAccessFolder[]>([]);
   const [selectedFolder, setSelectedFolder] = useState<FolderItem | null>(null);
   const [folderContents, setFolderContents] = useState<FileInfo[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isLoadingTree, setIsLoadingTree] = useState(false);
   const [isLoadingContents, setIsLoadingContents] = useState(false);
+  const [currentBasePath, setCurrentBasePath] = useState<string>("");
   const { toast } = useToast();
 
-  // Load initial folder structure
-  const loadFolderTree = useCallback(async () => {
+  // Load quick access folders
+  const loadQuickAccessFolders = useCallback(async () => {
+    if (isTauri()) {
+      try {
+        const paths = await fileApi.getCommonPaths();
+        setQuickAccessFolders(paths.map(([name, path]) => ({ name, path })));
+      } catch (error) {
+        console.error("Failed to load common paths:", error);
+      }
+    }
+  }, []);
+
+  // Load folder tree for a specific path
+  const loadFolderTree = useCallback(async (basePath?: string) => {
     setIsLoadingTree(true);
     try {
       if (isTauri()) {
-        const desktopPath = await fileApi.getDesktopPath();
-        const tree = await analyzerApi.getFolderTree(desktopPath, 3);
+        const pathToUse = basePath || await fileApi.getDesktopPath();
+        setCurrentBasePath(pathToUse);
+        const tree = await analyzerApi.getFolderTree(pathToUse, 3);
         const folderItem = convertTreeNodeToFolderItem(tree, "");
         setFolders([folderItem]);
 
-        // Auto-select desktop
+        // Auto-select the root folder
         setSelectedFolder(folderItem);
       }
     } catch (error) {
@@ -183,8 +218,13 @@ export default function FolderManager() {
   }, [toast]);
 
   useEffect(() => {
+    loadQuickAccessFolders();
     loadFolderTree();
-  }, [loadFolderTree]);
+  }, [loadQuickAccessFolders, loadFolderTree]);
+
+  const handleQuickAccessClick = (folder: QuickAccessFolder) => {
+    loadFolderTree(folder.path);
+  };
 
   useEffect(() => {
     if (selectedFolder) {
@@ -234,6 +274,35 @@ export default function FolderManager() {
       <div className="flex gap-6">
         {/* Folder Tree */}
         <div className="w-80 glass rounded-2xl p-4 border border-border h-fit max-h-[calc(100vh-200px)] overflow-auto">
+          {/* Quick Access */}
+          {quickAccessFolders.length > 0 && (
+            <div className="mb-4">
+              <p className="text-xs font-medium text-muted-foreground mb-2 px-1">빠른 액세스</p>
+              <div className="flex flex-wrap gap-2">
+                {quickAccessFolders.map((folder) => {
+                  const IconComponent = quickAccessIcons[folder.name] || Folder;
+                  const isActive = currentBasePath === folder.path;
+                  return (
+                    <motion.button
+                      key={folder.path}
+                      onClick={() => handleQuickAccessClick(folder)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                        isActive
+                          ? "bg-primary/15 text-primary"
+                          : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                      }`}
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <IconComponent className="w-3.5 h-3.5" />
+                      <span>{folder.name}</span>
+                    </motion.button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Search */}
           <div className="relative mb-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />

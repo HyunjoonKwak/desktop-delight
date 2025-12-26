@@ -30,9 +30,10 @@ import FileCard from "./FileCard";
 import HistoryPanel, { HistoryItem } from "./HistoryPanel";
 import FileDetailPanel from "./FileDetailPanel";
 import OrganizeRulesModal from "./OrganizeRulesModal";
+import RulePreviewModal from "./RuleManagement/RulePreviewModal";
 import { BackupManager } from "./BackupManager";
 import { useToast } from "@/hooks/use-toast";
-import { fileApi, historyApi, organizerApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
+import { fileApi, historyApi, rulesApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
 import type { FileInfo, FileCategory } from "@/lib/types";
 
 type SortKey = "name" | "date" | "size" | "category";
@@ -98,7 +99,9 @@ export default function DesktopView() {
   const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
+  const [desktopPath, setDesktopPath] = useState<string>("");
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [selectedFileForDetail, setSelectedFileForDetail] = useState<string | null>(null);
   const { toast } = useToast();
@@ -110,13 +113,18 @@ export default function DesktopView() {
     try {
       if (isTauri()) {
         console.log("[DesktopView] Calling scanDesktop...");
-        const desktopFiles = await fileApi.scanDesktop();
+        const [desktopFiles, path] = await Promise.all([
+          fileApi.scanDesktop(),
+          fileApi.getDesktopPath(),
+        ]);
         console.log("[DesktopView] Got files:", desktopFiles?.length);
         setFiles(desktopFiles.filter(f => !f.isDirectory));
+        setDesktopPath(path);
       } else {
         console.log("[DesktopView] Not in Tauri, using mock data");
         // Use mock data for development
         setFiles(mockDesktopFiles);
+        setDesktopPath("/Users/mock/Desktop");
       }
     } catch (error) {
       console.error("[DesktopView] Failed to load files:", error);
@@ -128,6 +136,7 @@ export default function DesktopView() {
       // Don't fallback to mock data in Tauri - show the error instead
       if (!isTauri()) {
         setFiles(mockDesktopFiles);
+        setDesktopPath("/Users/mock/Desktop");
       } else {
         setFiles([]);
       }
@@ -258,25 +267,26 @@ export default function DesktopView() {
     }
   };
 
-  const handleOrganize = async () => {
+  // Open preview modal instead of executing directly
+  const handleOrganize = () => {
+    setIsPreviewModalOpen(true);
+  };
+
+  // Execute unified organization (called from preview modal)
+  const executeOrganization = async () => {
     setIsOrganizing(true);
 
     try {
       if (isTauri()) {
-        // Get desktop path and execute organization
-        const desktopPath = await fileApi.getDesktopPath();
-        const result = await organizerApi.executeOrganization(desktopPath, {
-          createDateSubfolders: false,
-          dateFormat: "YYYY-MM",
-          handleDuplicates: "rename",
-        });
+        // Execute unified organization with rules applied
+        const result = await rulesApi.executeUnified(desktopPath);
 
         if (result.success) {
           setOrganized(true);
           addToHistory({
             type: "organize",
-            description: "바탕화면 자동 정리",
-            details: `${result.filesMoved}개 파일을 유형별로 분류했습니다`,
+            description: "바탕화면 자동 정리 (규칙 적용)",
+            details: `${result.filesMoved}개 파일을 규칙에 따라 분류했습니다`,
           });
           toast({
             title: "정리 완료",
@@ -847,6 +857,11 @@ export default function DesktopView() {
       <OrganizeRulesModal
         isOpen={isRulesModalOpen}
         onClose={() => setIsRulesModalOpen(false)}
+        sourcePath={desktopPath}
+        onPreview={() => {
+          setIsRulesModalOpen(false);
+          setIsPreviewModalOpen(true);
+        }}
         onSave={(rules) => {
           toast({
             title: "규칙 저장 완료",
@@ -858,6 +873,14 @@ export default function DesktopView() {
             details: `${rules.length}개의 규칙을 설정했습니다`,
           });
         }}
+      />
+
+      {/* Rule Preview Modal */}
+      <RulePreviewModal
+        open={isPreviewModalOpen}
+        onOpenChange={setIsPreviewModalOpen}
+        sourcePath={desktopPath}
+        onExecute={executeOrganization}
       />
 
       {/* Backup Manager */}

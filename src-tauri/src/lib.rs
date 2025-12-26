@@ -6,7 +6,7 @@ use services::watcher::WatcherState;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, Runtime,
+    Manager,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -93,6 +93,9 @@ pub fn run() {
             commands::scanner::scan_directory,
             commands::scanner::get_file_info,
             commands::scanner::get_desktop_path,
+            commands::scanner::get_home_path,
+            commands::scanner::get_common_paths,
+            commands::scanner::get_drives,
             // File operations
             commands::file_ops::move_file,
             commands::file_ops::copy_file,
@@ -129,6 +132,11 @@ pub fn run() {
             commands::rules::delete_rule,
             commands::rules::preview_rules,
             commands::rules::execute_rules,
+            // Unified organization commands (default + custom rules)
+            commands::rules::get_default_rules,
+            commands::rules::save_default_rule,
+            commands::rules::preview_unified,
+            commands::rules::execute_unified,
             // Watcher commands
             commands::watcher::start_watching,
             commands::watcher::stop_watching,

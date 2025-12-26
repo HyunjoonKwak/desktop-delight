@@ -1,5 +1,5 @@
-import { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { useState, useEffect, useCallback } from "react";
+import { motion, AnimatePresence, Reorder } from "framer-motion";
 import {
   X,
   Plus,
@@ -16,18 +16,32 @@ import {
   HardDrive,
   Tag,
   ChevronDown,
+  ChevronRight,
   Sparkles,
   Save,
   Loader2,
+  Package,
+  File,
+  Settings2,
+  Layers,
+  Eye,
+  Play,
 } from "lucide-react";
 import { rulesApi, isTauri } from "@/lib/tauri-api";
-import type { Rule, Condition } from "@/lib/types";
+import type { Rule, Condition, DefaultRule, FileCategory } from "@/lib/types";
+import { CATEGORY_INFO } from "@/lib/types";
+import FolderPickerInput from "./RuleManagement/FolderPickerInput";
+import ConfirmDialog from "./RuleManagement/ConfirmDialog";
 
 interface OrganizeRulesModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSave?: (rules: Rule[]) => void;
+  onPreview?: () => void;
+  sourcePath?: string;
 }
+
+type TabType = "default" | "custom";
 
 const conditionTypes = [
   { id: "extension", label: "파일 확장자", icon: FileText },
@@ -101,14 +115,17 @@ const operatorReverseMap: Record<string, string> = {
   matches: "matches",
 };
 
-const defaultFolders = [
-  { id: "images", label: "이미지", icon: Image, color: "hsl(340, 82%, 52%)" },
-  { id: "documents", label: "문서", icon: FileText, color: "hsl(207, 90%, 54%)" },
-  { id: "videos", label: "동영상", icon: Video, color: "hsl(270, 70%, 55%)" },
-  { id: "music", label: "음악", icon: Music, color: "hsl(160, 84%, 39%)" },
-  { id: "archives", label: "압축파일", icon: Archive, color: "hsl(35, 92%, 50%)" },
-  { id: "code", label: "소스코드", icon: Code, color: "hsl(180, 70%, 45%)" },
-];
+// Category icons
+const categoryIcons: Record<FileCategory, typeof Image> = {
+  images: Image,
+  documents: FileText,
+  videos: Video,
+  music: Music,
+  archives: Archive,
+  installers: Package,
+  code: Code,
+  others: File,
+};
 
 // UI Rule type for local state management
 interface UIRule {
@@ -116,6 +133,7 @@ interface UIRule {
   dbId?: number;
   name: string;
   enabled: boolean;
+  priority: number;
   condition: {
     type: "extension" | "size" | "date" | "name";
     operator: string;
@@ -129,14 +147,20 @@ interface UIRule {
 
 // Convert backend Rule to UI Rule
 const toUIRule = (rule: Rule): UIRule => {
-  const firstCondition = rule.conditions[0] || { field: "name", operator: "contains", value: "" };
+  const firstCondition = rule.conditions[0] || {
+    field: "name",
+    operator: "contains",
+    value: "",
+  };
   return {
     id: String(rule.id || Date.now()),
     dbId: rule.id,
     name: rule.name,
     enabled: rule.enabled,
+    priority: rule.priority,
     condition: {
-      type: (conditionFieldReverseMap[firstCondition.field] || "name") as UIRule["condition"]["type"],
+      type: (conditionFieldReverseMap[firstCondition.field] ||
+        "name") as UIRule["condition"]["type"],
       operator: operatorReverseMap[firstCondition.operator] || "contains",
       value: firstCondition.value,
     },
@@ -148,10 +172,10 @@ const toUIRule = (rule: Rule): UIRule => {
 };
 
 // Convert UI Rule to backend Rule
-const toBackendRule = (uiRule: UIRule): Rule => ({
+const toBackendRule = (uiRule: UIRule, priority: number): Rule => ({
   id: uiRule.dbId,
   name: uiRule.name,
-  priority: 0,
+  priority,
   enabled: uiRule.enabled,
   conditions: [
     {
@@ -170,11 +194,24 @@ export default function OrganizeRulesModal({
   isOpen,
   onClose,
   onSave,
+  onPreview,
+  sourcePath,
 }: OrganizeRulesModalProps) {
-  const [rules, setRules] = useState<UIRule[]>([]);
+  const [activeTab, setActiveTab] = useState<TabType>("default");
+  const [defaultRules, setDefaultRules] = useState<DefaultRule[]>([]);
+  const [customRules, setCustomRules] = useState<UIRule[]>([]);
+  const [expandedDefaultRule, setExpandedDefaultRule] = useState<number | null>(
+    null
+  );
   const [editingRule, setEditingRule] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState<{
+    open: boolean;
+    ruleId: string | null;
+  }>({ open: false, ruleId: null });
 
   // Load rules from database when modal opens
   useEffect(() => {
@@ -183,12 +220,17 @@ export default function OrganizeRulesModal({
 
       setLoading(true);
       try {
-        const dbRules = await rulesApi.getRules();
-        setRules(dbRules.map(toUIRule));
+        const [dbDefaultRules, dbCustomRules] = await Promise.all([
+          rulesApi.getDefaultRules(),
+          rulesApi.getRules(),
+        ]);
+        setDefaultRules(dbDefaultRules);
+        setCustomRules(dbCustomRules.map(toUIRule));
+        setHasUnsavedChanges(false);
       } catch (err) {
         console.error("Failed to load rules:", err);
-        // Use empty list if loading fails
-        setRules([]);
+        setDefaultRules([]);
+        setCustomRules([]);
       } finally {
         setLoading(false);
       }
@@ -197,20 +239,37 @@ export default function OrganizeRulesModal({
     loadRules();
   }, [isOpen]);
 
+  const handleClose = useCallback(() => {
+    if (hasUnsavedChanges) {
+      setShowCloseConfirm(true);
+    } else {
+      onClose();
+    }
+  }, [hasUnsavedChanges, onClose]);
+
   const addNewRule = () => {
     const newRule: UIRule = {
       id: `${Date.now()}`,
       name: "새 규칙",
       enabled: true,
+      priority: customRules.length,
       condition: { type: "extension", operator: "is", value: "" },
       action: { type: "move", destination: "" },
     };
-    setRules([...rules, newRule]);
+    setCustomRules([...customRules, newRule]);
     setEditingRule(newRule.id);
+    setHasUnsavedChanges(true);
   };
 
-  const deleteRule = async (id: string) => {
-    const rule = rules.find((r) => r.id === id);
+  const confirmDeleteRule = (id: string) => {
+    setDeleteConfirm({ open: true, ruleId: id });
+  };
+
+  const deleteRule = async () => {
+    const id = deleteConfirm.ruleId;
+    if (!id) return;
+
+    const rule = customRules.find((r) => r.id === id);
     if (rule?.dbId && isTauri()) {
       try {
         await rulesApi.deleteRule(rule.dbId);
@@ -218,29 +277,56 @@ export default function OrganizeRulesModal({
         console.error("Failed to delete rule:", err);
       }
     }
-    setRules(rules.filter((r) => r.id !== id));
+    setCustomRules(customRules.filter((r) => r.id !== id));
+    setDeleteConfirm({ open: false, ruleId: null });
+    setHasUnsavedChanges(true);
   };
 
   const toggleRule = (id: string) => {
-    setRules(
-      rules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
+    setCustomRules(
+      customRules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
     );
+    setHasUnsavedChanges(true);
   };
 
   const updateRule = (id: string, updates: Partial<UIRule>) => {
-    setRules(rules.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+    setCustomRules(
+      customRules.map((r) => (r.id === id ? { ...r, ...updates } : r))
+    );
+    setHasUnsavedChanges(true);
+  };
+
+  const toggleDefaultRule = (id: number) => {
+    setDefaultRules(
+      defaultRules.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r))
+    );
+    setHasUnsavedChanges(true);
+  };
+
+  const updateDefaultRule = (id: number, updates: Partial<DefaultRule>) => {
+    setDefaultRules(
+      defaultRules.map((r) => (r.id === id ? { ...r, ...updates } : r))
+    );
+    setHasUnsavedChanges(true);
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Save all rules to database
+      // Save default rules with priority based on order
+      for (let i = 0; i < defaultRules.length; i++) {
+        await rulesApi.saveDefaultRule({ ...defaultRules[i], priority: i });
+      }
+
+      // Save custom rules with priority based on order
       const savedRules: Rule[] = [];
-      for (const uiRule of rules) {
-        const backendRule = toBackendRule(uiRule);
+      for (let i = 0; i < customRules.length; i++) {
+        const backendRule = toBackendRule(customRules[i], i);
         const saved = await rulesApi.saveRule(backendRule);
         savedRules.push(saved);
       }
+
+      setHasUnsavedChanges(false);
       onSave?.(savedRules);
       onClose();
     } catch (err) {
@@ -248,6 +334,16 @@ export default function OrganizeRulesModal({
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleReorder = (newOrder: UIRule[]) => {
+    setCustomRules(newOrder);
+    setHasUnsavedChanges(true);
+  };
+
+  const handleDefaultRulesReorder = (newOrder: DefaultRule[]) => {
+    setDefaultRules(newOrder);
+    setHasUnsavedChanges(true);
   };
 
   const getOperators = (type: string) => {
@@ -280,339 +376,586 @@ export default function OrganizeRulesModal({
     }
   };
 
+  const enabledDefaultCount = defaultRules.filter((r) => r.enabled).length;
+  const enabledCustomCount = customRules.filter((r) => r.enabled).length;
+
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <>
-          {/* Backdrop */}
-          <motion.div
-            className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-          />
+    <>
+      <AnimatePresence>
+        {isOpen && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={handleClose}
+            />
 
-          {/* Modal */}
-          <motion.div
-            className="fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] max-h-[85vh] glass rounded-2xl border border-border z-50 flex flex-col overflow-hidden"
-            initial={{ opacity: 0, scale: 0.95, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.95, y: 20 }}
-            transition={{ type: "spring", damping: 25, stiffness: 300 }}
-          >
-            {/* Header */}
-            <div className="flex items-center justify-between p-5 border-b border-border">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
-                  <Sparkles className="w-5 h-5 text-primary-foreground" />
+            {/* Modal */}
+            <motion.div
+              className="fixed inset-x-4 top-[5vh] mx-auto max-w-[750px] max-h-[90vh] glass rounded-2xl border border-border z-50 flex flex-col overflow-hidden"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              transition={{ type: "spring", damping: 25, stiffness: 300 }}
+            >
+              {/* Header */}
+              <div className="flex items-center justify-between p-5 border-b border-border">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl gradient-primary flex items-center justify-center">
+                    <Sparkles className="w-5 h-5 text-primary-foreground" />
+                  </div>
+                  <div>
+                    <h2 className="font-semibold text-foreground">
+                      정리 규칙 설정
+                    </h2>
+                    <p className="text-xs text-muted-foreground">
+                      파일 정리 시 적용될 규칙을 설정하세요
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h2 className="font-semibold text-foreground">정리 규칙 설정</h2>
-                  <p className="text-xs text-muted-foreground">
-                    자동 정리 시 적용될 규칙을 설정하세요
-                  </p>
-                </div>
-              </div>
-              <button
-                onClick={onClose}
-                className="p-2 rounded-lg hover:bg-secondary transition-colors"
-              >
-                <X className="w-5 h-5 text-muted-foreground" />
-              </button>
-            </div>
-
-            {/* Content */}
-            <div className="flex-1 overflow-auto p-5">
-              {loading ? (
-                <div className="flex items-center justify-center h-40">
-                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
-                </div>
-              ) : (
-                <>
-              {/* Quick Folders */}
-              <div className="mb-6">
-                <h3 className="text-sm font-medium text-foreground mb-3">
-                  빠른 폴더 분류
-                </h3>
-                <div className="grid grid-cols-6 gap-2">
-                  {defaultFolders.map((folder) => (
-                    <button
-                      key={folder.id}
-                      className="flex flex-col items-center gap-2 p-3 rounded-xl border border-border hover:border-primary/50 hover:bg-primary/5 transition-all"
-                    >
-                      <div
-                        className="w-10 h-10 rounded-lg flex items-center justify-center"
-                        style={{ backgroundColor: `${folder.color}20` }}
-                      >
-                        <folder.icon
-                          className="w-5 h-5"
-                          style={{ color: folder.color }}
-                        />
-                      </div>
-                      <span className="text-xs text-muted-foreground">
-                        {folder.label}
-                      </span>
-                    </button>
-                  ))}
-                </div>
+                <button
+                  onClick={handleClose}
+                  className="p-2 rounded-lg hover:bg-secondary transition-colors"
+                >
+                  <X className="w-5 h-5 text-muted-foreground" />
+                </button>
               </div>
 
-              {/* Rules List */}
-              <div className="mb-4">
-                <div className="flex items-center justify-between mb-3">
-                  <h3 className="text-sm font-medium text-foreground">
-                    사용자 정의 규칙
-                  </h3>
-                  <span className="text-xs text-muted-foreground">
-                    {rules.filter((r) => r.enabled).length}개 활성화
+              {/* Tabs */}
+              <div className="flex border-b border-border">
+                <button
+                  onClick={() => setActiveTab("default")}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative ${
+                    activeTab === "default"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Layers className="w-4 h-4" />
+                  <span>기본 규칙</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-xs ${
+                      activeTab === "default"
+                        ? "bg-primary/10 text-primary"
+                        : "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {enabledDefaultCount}/{defaultRules.length}
                   </span>
-                </div>
-
-                <div className="space-y-3">
-                  {rules.map((rule, index) => (
+                  {activeTab === "default" && (
                     <motion.div
-                      key={rule.id}
-                      className={`p-4 rounded-xl border transition-all ${
-                        rule.enabled
-                          ? "bg-card border-border"
-                          : "bg-muted/30 border-border/50 opacity-60"
-                      }`}
-                      initial={{ opacity: 0, y: 10 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: index * 0.05 }}
-                      layout
+                      className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                      layoutId="tabIndicator"
+                    />
+                  )}
+                </button>
+                <button
+                  onClick={() => setActiveTab("custom")}
+                  className={`flex-1 flex items-center justify-center gap-2 px-4 py-3 text-sm font-medium transition-colors relative ${
+                    activeTab === "custom"
+                      ? "text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Settings2 className="w-4 h-4" />
+                  <span>사용자 규칙</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-xs ${
+                      activeTab === "custom"
+                        ? "bg-primary/10 text-primary"
+                        : "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {enabledCustomCount}/{customRules.length}
+                  </span>
+                  {activeTab === "custom" && (
+                    <motion.div
+                      className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary"
+                      layoutId="tabIndicator"
+                    />
+                  )}
+                </button>
+              </div>
+
+              {/* Content */}
+              <div className="flex-1 overflow-auto p-5">
+                {loading ? (
+                  <div className="flex items-center justify-center h-40">
+                    <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                  </div>
+                ) : activeTab === "default" ? (
+                  /* Default Rules Tab */
+                  <div className="space-y-3">
+                    <p className="text-xs text-muted-foreground mb-4">
+                      드래그하여 우선순위를 변경할 수 있습니다. 상위 규칙이 먼저 적용됩니다.
+                      사용자 규칙이 기본 규칙보다 우선 적용됩니다.
+                    </p>
+
+                    <Reorder.Group
+                      axis="y"
+                      values={defaultRules}
+                      onReorder={handleDefaultRulesReorder}
+                      className="space-y-3"
                     >
-                      <div className="flex items-center gap-3">
-                        {/* Drag Handle */}
-                        <div className="cursor-grab text-muted-foreground hover:text-foreground">
-                          <GripVertical className="w-4 h-4" />
-                        </div>
+                      {defaultRules.map((rule, index) => {
+                        const category = rule.category as FileCategory;
+                        const Icon = categoryIcons[category] || File;
+                        const info = CATEGORY_INFO[category];
+                        const isExpanded = expandedDefaultRule === rule.id;
 
-                        {/* Toggle */}
-                        <button
-                          onClick={() => toggleRule(rule.id)}
-                          className={`w-10 h-5 rounded-full transition-colors ${
-                            rule.enabled ? "bg-primary" : "bg-muted"
-                          }`}
-                        >
-                          <motion.div
-                            className="w-4 h-4 bg-foreground rounded-full"
-                            animate={{ x: rule.enabled ? 22 : 2 }}
-                          />
-                        </button>
-
-                        {/* Rule Info */}
-                        <div className="flex-1">
-                          {editingRule === rule.id ? (
-                            <input
-                              type="text"
-                              value={rule.name}
-                              onChange={(e) =>
-                                updateRule(rule.id, { name: e.target.value })
-                              }
-                              className="w-full px-2 py-1 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                              onBlur={() => setEditingRule(null)}
-                              autoFocus
-                            />
-                          ) : (
-                            <p
-                              className="text-sm font-medium text-foreground cursor-pointer hover:text-primary"
-                              onClick={() => setEditingRule(rule.id)}
-                            >
-                              {rule.name}
-                            </p>
-                          )}
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            {conditionTypes.find((c) => c.id === rule.condition.type)?.label}{" "}
-                            {getOperators(rule.condition.type).find(
-                              (o) => o.id === rule.condition.operator
-                            )?.label}{" "}
-                            "{rule.condition.value}" → {rule.action.destination}
-                          </p>
-                        </div>
-
-                        {/* Actions */}
-                        <button
-                          onClick={() =>
-                            setEditingRule(
-                              editingRule === rule.id ? null : rule.id
-                            )
-                          }
-                          className="p-1.5 rounded-lg hover:bg-secondary transition-colors"
-                        >
-                          <ChevronDown
-                            className={`w-4 h-4 text-muted-foreground transition-transform ${
-                              editingRule === rule.id ? "rotate-180" : ""
+                        return (
+                          <Reorder.Item
+                            key={rule.id}
+                            value={rule}
+                            className={`rounded-xl border transition-all ${
+                              rule.enabled
+                                ? "bg-card border-border"
+                                : "bg-muted/30 border-border/50 opacity-60"
                             }`}
-                          />
-                        </button>
-                        <button
-                          onClick={() => deleteRule(rule.id)}
-                          className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-
-                      {/* Expanded Editor */}
-                      <AnimatePresence>
-                        {editingRule === rule.id && (
-                          <motion.div
-                            className="mt-4 pt-4 border-t border-border space-y-4"
-                            initial={{ opacity: 0, height: 0 }}
-                            animate={{ opacity: 1, height: "auto" }}
-                            exit={{ opacity: 0, height: 0 }}
                           >
-                            {/* Condition */}
-                            <div>
-                              <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                                조건
-                              </label>
-                              <div className="flex gap-2">
-                                <select
-                                  value={rule.condition.type}
-                                  onChange={(e) =>
-                                    updateRule(rule.id, {
-                                      condition: {
-                                        ...rule.condition,
-                                        type: e.target.value as UIRule["condition"]["type"],
-                                        operator: getOperators(e.target.value)[0].id,
-                                      },
-                                    })
-                                  }
-                                  className="flex-1 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                                >
-                                  {conditionTypes.map((ct) => (
-                                    <option key={ct.id} value={ct.id}>
-                                      {ct.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <select
-                                  value={rule.condition.operator}
-                                  onChange={(e) =>
-                                    updateRule(rule.id, {
-                                      condition: {
-                                        ...rule.condition,
-                                        operator: e.target.value,
-                                      },
-                                    })
-                                  }
-                                  className="flex-1 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                                >
-                                  {getOperators(rule.condition.type).map((op) => (
-                                    <option key={op.id} value={op.id}>
-                                      {op.label}
-                                    </option>
-                                  ))}
-                                </select>
-                                <input
-                                  type="text"
-                                  value={rule.condition.value}
-                                  onChange={(e) =>
-                                    updateRule(rule.id, {
-                                      condition: {
-                                        ...rule.condition,
-                                        value: e.target.value,
-                                      },
-                                    })
-                                  }
-                                  placeholder={getPlaceholder(rule.condition.type)}
-                                  className="flex-1 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                            {/* Rule Header */}
+                            <div className="flex items-center gap-3 p-4">
+                              {/* Drag Handle */}
+                              <div className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing">
+                                <GripVertical className="w-4 h-4" />
+                              </div>
+
+                              {/* Priority Badge */}
+                              <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs font-medium text-muted-foreground flex-shrink-0">
+                                {index + 1}
+                              </span>
+
+                              <div
+                                className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                                style={{
+                                  backgroundColor: `${info?.color || "hsl(220, 10%, 50%)"}20`,
+                                }}
+                              >
+                                <Icon
+                                  className="w-5 h-5"
+                                  style={{
+                                    color: info?.color || "hsl(220, 10%, 50%)",
+                                  }}
                                 />
                               </div>
-                            </div>
 
-                            {/* Action */}
-                            <div>
-                              <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                                작업
-                              </label>
-                              <div className="flex gap-2">
-                                <select
-                                  value={rule.action.type}
-                                  onChange={(e) =>
-                                    updateRule(rule.id, {
-                                      action: {
-                                        ...rule.action,
-                                        type: e.target.value as UIRule["action"]["type"],
-                                      },
-                                    })
-                                  }
-                                  className="w-32 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                                >
-                                  <option value="move">폴더로 이동</option>
-                                  <option value="copy">폴더로 복사</option>
-                                  <option value="delete">삭제</option>
-                                </select>
-                                <div className="flex-1 relative">
-                                  <Folder className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                                  <input
-                                    type="text"
-                                    value={rule.action.destination}
-                                    onChange={(e) =>
-                                      updateRule(rule.id, {
-                                        action: {
-                                          ...rule.action,
-                                          destination: e.target.value,
-                                        },
-                                      })
-                                    }
-                                    placeholder="대상 폴더 이름"
-                                    className="w-full pl-10 pr-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
-                                  />
-                                </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="font-medium text-foreground">
+                                  {info?.label || category}
+                                </p>
+                                <p className="text-xs text-muted-foreground truncate">
+                                  → {rule.destination || `${info?.label || category} 폴더`}
+                                </p>
                               </div>
-                            </div>
-                          </motion.div>
-                        )}
-                      </AnimatePresence>
-                    </motion.div>
-                  ))}
 
-                  {/* Add New Rule */}
+                              {/* Toggle */}
+                              <button
+                                onClick={() => toggleDefaultRule(rule.id)}
+                                className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
+                                  rule.enabled ? "bg-primary" : "bg-muted"
+                                }`}
+                              >
+                                <motion.div
+                                  className="w-4 h-4 bg-foreground rounded-full"
+                                  animate={{ x: rule.enabled ? 22 : 2 }}
+                                />
+                              </button>
+
+                              {/* Expand Button */}
+                              <button
+                                onClick={() =>
+                                  setExpandedDefaultRule(isExpanded ? null : rule.id)
+                                }
+                                className="p-1.5 rounded-lg hover:bg-secondary transition-colors"
+                              >
+                                <motion.div
+                                  animate={{ rotate: isExpanded ? 90 : 0 }}
+                                  transition={{ duration: 0.2 }}
+                                >
+                                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                                </motion.div>
+                              </button>
+                            </div>
+
+                            {/* Expanded Settings */}
+                            <AnimatePresence>
+                              {isExpanded && (
+                                <motion.div
+                                  initial={{ height: 0, opacity: 0 }}
+                                  animate={{ height: "auto", opacity: 1 }}
+                                  exit={{ height: 0, opacity: 0 }}
+                                  transition={{ duration: 0.2 }}
+                                  className="overflow-hidden"
+                                >
+                                  <div className="px-4 pb-4 pt-0 space-y-3 border-t border-border mt-0 pt-4">
+                                    <div>
+                                      <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                                        대상 폴더
+                                      </label>
+                                      <FolderPickerInput
+                                        value={rule.destination}
+                                        onChange={(path) =>
+                                          updateDefaultRule(rule.id, {
+                                            destination: path,
+                                          })
+                                        }
+                                        placeholder={`${info?.label || category} 폴더 경로`}
+                                      />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <input
+                                        type="checkbox"
+                                        id={`date-subfolder-${rule.id}`}
+                                        checked={rule.createDateSubfolder}
+                                        onChange={(e) =>
+                                          updateDefaultRule(rule.id, {
+                                            createDateSubfolder: e.target.checked,
+                                          })
+                                        }
+                                        className="w-4 h-4 rounded border-border"
+                                      />
+                                      <label
+                                        htmlFor={`date-subfolder-${rule.id}`}
+                                        className="text-sm text-muted-foreground"
+                                      >
+                                        날짜별 하위폴더 생성
+                                      </label>
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </Reorder.Item>
+                        );
+                      })}
+                    </Reorder.Group>
+                  </div>
+                ) : (
+                  /* Custom Rules Tab */
+                  <div className="space-y-3">
+                    <p className="text-xs text-muted-foreground mb-4">
+                      드래그하여 우선순위를 변경할 수 있습니다. 상위 규칙이 먼저
+                      적용됩니다.
+                    </p>
+
+                    <Reorder.Group
+                      axis="y"
+                      values={customRules}
+                      onReorder={handleReorder}
+                      className="space-y-3"
+                    >
+                      {customRules.map((rule, index) => (
+                        <Reorder.Item
+                          key={rule.id}
+                          value={rule}
+                          className={`p-4 rounded-xl border transition-all ${
+                            rule.enabled
+                              ? "bg-card border-border"
+                              : "bg-muted/30 border-border/50 opacity-60"
+                          }`}
+                        >
+                          <div className="flex items-center gap-3">
+                            {/* Drag Handle */}
+                            <div className="cursor-grab text-muted-foreground hover:text-foreground active:cursor-grabbing">
+                              <GripVertical className="w-4 h-4" />
+                            </div>
+
+                            {/* Priority Badge */}
+                            <span className="w-6 h-6 rounded-full bg-secondary flex items-center justify-center text-xs font-medium text-muted-foreground flex-shrink-0">
+                              {index + 1}
+                            </span>
+
+                            {/* Toggle */}
+                            <button
+                              onClick={() => toggleRule(rule.id)}
+                              className={`w-10 h-5 rounded-full transition-colors flex-shrink-0 ${
+                                rule.enabled ? "bg-primary" : "bg-muted"
+                              }`}
+                            >
+                              <motion.div
+                                className="w-4 h-4 bg-foreground rounded-full"
+                                animate={{ x: rule.enabled ? 22 : 2 }}
+                              />
+                            </button>
+
+                            {/* Rule Info */}
+                            <div className="flex-1 min-w-0">
+                              {editingRule === rule.id ? (
+                                <input
+                                  type="text"
+                                  value={rule.name}
+                                  onChange={(e) =>
+                                    updateRule(rule.id, { name: e.target.value })
+                                  }
+                                  className="w-full px-2 py-1 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                  onBlur={() => setEditingRule(null)}
+                                  onKeyDown={(e) =>
+                                    e.key === "Enter" && setEditingRule(null)
+                                  }
+                                  autoFocus
+                                />
+                              ) : (
+                                <p
+                                  className="text-sm font-medium text-foreground cursor-pointer hover:text-primary truncate"
+                                  onClick={() => setEditingRule(rule.id)}
+                                >
+                                  {rule.name}
+                                </p>
+                              )}
+                              <p className="text-xs text-muted-foreground mt-0.5 truncate">
+                                {
+                                  conditionTypes.find(
+                                    (c) => c.id === rule.condition.type
+                                  )?.label
+                                }{" "}
+                                {
+                                  getOperators(rule.condition.type).find(
+                                    (o) => o.id === rule.condition.operator
+                                  )?.label
+                                }{" "}
+                                "{rule.condition.value}" → {rule.action.destination}
+                              </p>
+                            </div>
+
+                            {/* Actions */}
+                            <button
+                              onClick={() =>
+                                setEditingRule(
+                                  editingRule === rule.id ? null : rule.id
+                                )
+                              }
+                              className="p-1.5 rounded-lg hover:bg-secondary transition-colors"
+                            >
+                              <ChevronDown
+                                className={`w-4 h-4 text-muted-foreground transition-transform ${
+                                  editingRule === rule.id ? "rotate-180" : ""
+                                }`}
+                              />
+                            </button>
+                            <button
+                              onClick={() => confirmDeleteRule(rule.id)}
+                              className="p-1.5 rounded-lg hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {/* Expanded Editor */}
+                          <AnimatePresence>
+                            {editingRule === rule.id && (
+                              <motion.div
+                                className="mt-4 pt-4 border-t border-border space-y-4"
+                                initial={{ opacity: 0, height: 0 }}
+                                animate={{ opacity: 1, height: "auto" }}
+                                exit={{ opacity: 0, height: 0 }}
+                              >
+                                {/* Condition */}
+                                <div>
+                                  <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                                    조건
+                                  </label>
+                                  <div className="flex gap-2">
+                                    <select
+                                      value={rule.condition.type}
+                                      onChange={(e) =>
+                                        updateRule(rule.id, {
+                                          condition: {
+                                            ...rule.condition,
+                                            type: e.target
+                                              .value as UIRule["condition"]["type"],
+                                            operator: getOperators(e.target.value)[0]
+                                              .id,
+                                          },
+                                        })
+                                      }
+                                      className="flex-1 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                    >
+                                      {conditionTypes.map((ct) => (
+                                        <option key={ct.id} value={ct.id}>
+                                          {ct.label}
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      value={rule.condition.operator}
+                                      onChange={(e) =>
+                                        updateRule(rule.id, {
+                                          condition: {
+                                            ...rule.condition,
+                                            operator: e.target.value,
+                                          },
+                                        })
+                                      }
+                                      className="flex-1 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                    >
+                                      {getOperators(rule.condition.type).map(
+                                        (op) => (
+                                          <option key={op.id} value={op.id}>
+                                            {op.label}
+                                          </option>
+                                        )
+                                      )}
+                                    </select>
+                                    <input
+                                      type="text"
+                                      value={rule.condition.value}
+                                      onChange={(e) =>
+                                        updateRule(rule.id, {
+                                          condition: {
+                                            ...rule.condition,
+                                            value: e.target.value,
+                                          },
+                                        })
+                                      }
+                                      placeholder={getPlaceholder(
+                                        rule.condition.type
+                                      )}
+                                      className="flex-1 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                    />
+                                  </div>
+                                </div>
+
+                                {/* Action */}
+                                <div>
+                                  <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                                    작업
+                                  </label>
+                                  <div className="flex gap-2">
+                                    <select
+                                      value={rule.action.type}
+                                      onChange={(e) =>
+                                        updateRule(rule.id, {
+                                          action: {
+                                            ...rule.action,
+                                            type: e.target
+                                              .value as UIRule["action"]["type"],
+                                          },
+                                        })
+                                      }
+                                      className="w-32 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                    >
+                                      <option value="move">폴더로 이동</option>
+                                      <option value="copy">폴더로 복사</option>
+                                      <option value="delete">삭제</option>
+                                    </select>
+                                    <div className="flex-1">
+                                      <FolderPickerInput
+                                        value={rule.action.destination}
+                                        onChange={(path) =>
+                                          updateRule(rule.id, {
+                                            action: {
+                                              ...rule.action,
+                                              destination: path,
+                                            },
+                                          })
+                                        }
+                                        placeholder="대상 폴더 경로"
+                                        disabled={rule.action.type === "delete"}
+                                      />
+                                    </div>
+                                  </div>
+                                </div>
+                              </motion.div>
+                            )}
+                          </AnimatePresence>
+                        </Reorder.Item>
+                      ))}
+                    </Reorder.Group>
+
+                    {/* Add New Rule */}
+                    <motion.button
+                      onClick={addNewRule}
+                      className="w-full flex items-center justify-center gap-2 p-4 rounded-xl border border-dashed border-border hover:border-primary/50 hover:bg-primary/5 text-muted-foreground hover:text-foreground transition-all"
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.99 }}
+                    >
+                      <Plus className="w-5 h-5" />
+                      <span className="text-sm font-medium">새 규칙 추가</span>
+                    </motion.button>
+                  </div>
+                )}
+              </div>
+
+              {/* Footer */}
+              <div className="flex items-center justify-between p-5 border-t border-border">
+                <div className="flex items-center gap-2">
+                  {hasUnsavedChanges && (
+                    <span className="text-xs text-amber-500">
+                      저장되지 않은 변경사항이 있습니다
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
                   <motion.button
-                    onClick={addNewRule}
-                    className="w-full flex items-center justify-center gap-2 p-4 rounded-xl border border-dashed border-border hover:border-primary/50 hover:bg-primary/5 text-muted-foreground hover:text-foreground transition-all"
-                    whileHover={{ scale: 1.01 }}
-                    whileTap={{ scale: 0.99 }}
+                    onClick={handleClose}
+                    className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
                   >
-                    <Plus className="w-5 h-5" />
-                    <span className="text-sm font-medium">새 규칙 추가</span>
+                    취소
+                  </motion.button>
+                  {onPreview && (
+                    <motion.button
+                      onClick={onPreview}
+                      className="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-colors"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      <Eye className="w-4 h-4" />
+                      <span>미리보기</span>
+                    </motion.button>
+                  )}
+                  <motion.button
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity disabled:opacity-50"
+                    whileHover={{ scale: saving ? 1 : 1.02 }}
+                    whileTap={{ scale: saving ? 1 : 0.98 }}
+                  >
+                    {saving ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Save className="w-4 h-4" />
+                    )}
+                    <span>{saving ? "저장 중..." : "규칙 저장"}</span>
                   </motion.button>
                 </div>
               </div>
-              </>
-              )}
-            </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
-            {/* Footer */}
-            <div className="flex items-center justify-between p-5 border-t border-border">
-              <button
-                onClick={onClose}
-                className="px-4 py-2 rounded-xl text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors"
-              >
-                취소
-              </button>
-              <motion.button
-                onClick={handleSave}
-                disabled={saving}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity disabled:opacity-50"
-                whileHover={{ scale: saving ? 1 : 1.02 }}
-                whileTap={{ scale: saving ? 1 : 0.98 }}
-              >
-                {saving ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Save className="w-4 h-4" />
-                )}
-                <span>{saving ? "저장 중..." : "규칙 저장"}</span>
-              </motion.button>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+      {/* Close Confirmation Dialog */}
+      <ConfirmDialog
+        open={showCloseConfirm}
+        onOpenChange={setShowCloseConfirm}
+        title="변경사항 저장 안 함"
+        description="저장하지 않은 변경사항이 있습니다. 정말 닫으시겠습니까?"
+        confirmLabel="닫기"
+        cancelLabel="계속 편집"
+        variant="destructive"
+        onConfirm={() => {
+          setShowCloseConfirm(false);
+          setHasUnsavedChanges(false);
+          onClose();
+        }}
+      />
+
+      {/* Delete Confirmation Dialog */}
+      <ConfirmDialog
+        open={deleteConfirm.open}
+        onOpenChange={(open) => setDeleteConfirm({ ...deleteConfirm, open })}
+        title="규칙 삭제"
+        description="이 규칙을 삭제하시겠습니까? 이 작업은 취소할 수 없습니다."
+        confirmLabel="삭제"
+        cancelLabel="취소"
+        variant="destructive"
+        onConfirm={deleteRule}
+      />
+    </>
   );
 }

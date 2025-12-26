@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   Folder,
@@ -12,6 +12,8 @@ import {
   Copy,
   GitCompare,
 } from "lucide-react";
+import { fileApi, isTauri } from "@/lib/tauri-api";
+import type { DriveInfo } from "@/lib/types";
 
 interface SidebarProps {
   activeTab: string;
@@ -27,12 +29,23 @@ const menuItems = [
   { id: "folder-compare", label: "폴더 비교 & 머지", icon: GitCompare },
 ];
 
-const drives = [
-  { label: "로컬 디스크 (C:)", used: 234, total: 500 },
-  { label: "데이터 (D:)", used: 789, total: 1000 },
-];
-
 export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
+  const [drives, setDrives] = useState<DriveInfo[]>([]);
+
+  useEffect(() => {
+    const loadDrives = async () => {
+      if (isTauri()) {
+        try {
+          const driveList = await fileApi.getDrives();
+          setDrives(driveList);
+        } catch (error) {
+          console.error("Failed to load drives:", error);
+        }
+      }
+    };
+    loadDrives();
+  }, []);
+
   return (
     <aside className="w-72 h-screen glass border-r border-border flex flex-col">
       {/* Logo */}
@@ -80,28 +93,34 @@ export default function Sidebar({ activeTab, setActiveTab }: SidebarProps) {
           드라이브
         </p>
         <div className="space-y-3">
-          {drives.map((drive) => (
-            <div
-              key={drive.label}
-              className="px-3 py-2 rounded-lg bg-secondary/50"
-            >
-              <div className="flex items-center gap-2 mb-2">
-                <HardDrive className="w-4 h-4 text-muted-foreground" />
-                <span className="text-xs text-foreground">{drive.label}</span>
+          {drives.length > 0 ? (
+            drives.map((drive) => (
+              <div
+                key={drive.path}
+                className="px-3 py-2 rounded-lg bg-secondary/50"
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  <HardDrive className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-xs text-foreground truncate">{drive.name}</span>
+                </div>
+                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                  <motion.div
+                    className="h-full gradient-primary rounded-full"
+                    initial={{ width: 0 }}
+                    animate={{ width: `${drive.usagePercent}%` }}
+                    transition={{ duration: 1, ease: "easeOut" }}
+                  />
+                </div>
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  {drive.usedFormatted} / {drive.totalFormatted} ({drive.usagePercent.toFixed(0)}%)
+                </p>
               </div>
-              <div className="h-1.5 bg-muted rounded-full overflow-hidden">
-                <motion.div
-                  className="h-full gradient-primary rounded-full"
-                  initial={{ width: 0 }}
-                  animate={{ width: `${(drive.used / drive.total) * 100}%` }}
-                  transition={{ duration: 1, ease: "easeOut" }}
-                />
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-1">
-                {drive.used}GB / {drive.total}GB
-              </p>
+            ))
+          ) : (
+            <div className="px-3 py-2 text-xs text-muted-foreground">
+              드라이브 정보를 불러오는 중...
             </div>
-          ))}
+          )}
         </div>
       </div>
 

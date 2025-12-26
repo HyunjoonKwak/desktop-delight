@@ -22,6 +22,19 @@ export type FileCategory =
   | 'code'
   | 'others';
 
+// Drive info types
+export interface DriveInfo {
+  name: string;
+  path: string;
+  totalBytes: number;
+  availableBytes: number;
+  usedBytes: number;
+  totalFormatted: string;
+  availableFormatted: string;
+  usedFormatted: string;
+  usagePercent: number;
+}
+
 // Settings types
 export interface AppSettings {
   desktopPath: string;
@@ -87,6 +100,35 @@ export interface ExecuteRulesResult {
   executedCount: number;
   skippedCount: number;
   errors: string[];
+}
+
+// Default category-based rule (기본 카테고리 규칙)
+export interface DefaultRule {
+  id: number;
+  category: FileCategory;
+  enabled: boolean;
+  destination: string;
+  createDateSubfolder: boolean;
+  priority: number;
+}
+
+// Unified preview result (통합 미리보기 결과)
+export interface UnifiedPreview {
+  file: FileInfo;
+  matchType: 'custom' | 'default';
+  rule?: Rule;
+  defaultRule?: DefaultRule;
+  action: string;
+  destination: string;
+}
+
+// Unified organization result
+export interface UnifiedOrganizeResult {
+  success: boolean;
+  filesMoved: number;
+  filesSkipped: number;
+  errors: string[];
+  historyId: number;
 }
 
 // Rename types

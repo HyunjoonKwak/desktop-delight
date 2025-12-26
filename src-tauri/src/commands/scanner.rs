@@ -111,6 +111,131 @@ pub fn get_desktop_path() -> Result<String, String> {
 }
 
 #[tauri::command]
+pub fn get_home_path() -> Result<String, String> {
+    directories::UserDirs::new()
+        .map(|dirs| dirs.home_dir().to_string_lossy().to_string())
+        .ok_or_else(|| "Could not find home directory".to_string())
+}
+
+#[tauri::command]
+pub fn get_common_paths() -> Result<Vec<(String, String)>, String> {
+    let user_dirs = directories::UserDirs::new()
+        .ok_or_else(|| "Could not get user directories".to_string())?;
+
+    let mut paths: Vec<(String, String)> = Vec::new();
+
+    // Home
+    paths.push(("홈".to_string(), user_dirs.home_dir().to_string_lossy().to_string()));
+
+    // Desktop
+    if let Some(desktop) = user_dirs.desktop_dir() {
+        paths.push(("바탕화면".to_string(), desktop.to_string_lossy().to_string()));
+    }
+
+    // Documents
+    if let Some(docs) = user_dirs.document_dir() {
+        paths.push(("문서".to_string(), docs.to_string_lossy().to_string()));
+    }
+
+    // Downloads
+    if let Some(downloads) = user_dirs.download_dir() {
+        paths.push(("다운로드".to_string(), downloads.to_string_lossy().to_string()));
+    }
+
+    // Pictures
+    if let Some(pictures) = user_dirs.picture_dir() {
+        paths.push(("사진".to_string(), pictures.to_string_lossy().to_string()));
+    }
+
+    // Videos
+    if let Some(videos) = user_dirs.video_dir() {
+        paths.push(("동영상".to_string(), videos.to_string_lossy().to_string()));
+    }
+
+    // Music
+    if let Some(music) = user_dirs.audio_dir() {
+        paths.push(("음악".to_string(), music.to_string_lossy().to_string()));
+    }
+
+    Ok(paths)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DriveInfo {
+    pub name: String,
+    pub path: String,
+    pub total_bytes: u64,
+    pub available_bytes: u64,
+    pub used_bytes: u64,
+    pub total_formatted: String,
+    pub available_formatted: String,
+    pub used_formatted: String,
+    pub usage_percent: f32,
+}
+
+#[tauri::command]
+pub fn get_drives() -> Result<Vec<DriveInfo>, String> {
+    let mut drives: Vec<DriveInfo> = Vec::new();
+
+    #[cfg(target_os = "windows")]
+    {
+        // On Windows, check common drive letters
+        for letter in b'A'..=b'Z' {
+            let path = format!("{}:\\", letter as char);
+            if let Ok(space) = fs2::statvfs(&path) {
+                let total = space.total_space();
+                let available = space.available_space();
+                let used = total.saturating_sub(available);
+
+                if total > 0 {
+                    drives.push(DriveInfo {
+                        name: format!("로컬 디스크 ({}:)", letter as char),
+                        path: path.clone(),
+                        total_bytes: total,
+                        available_bytes: available,
+                        used_bytes: used,
+                        total_formatted: format_size(total),
+                        available_formatted: format_size(available),
+                        used_formatted: format_size(used),
+                        usage_percent: (used as f32 / total as f32) * 100.0,
+                    });
+                }
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        // On macOS/Linux, get home directory's disk
+        if let Some(user_dirs) = directories::UserDirs::new() {
+            let home_path = user_dirs.home_dir().to_string_lossy().to_string();
+
+            // Get disk space for root/home
+            if let Ok(space) = fs2::statvfs(&home_path) {
+                let total = space.total_space();
+                let available = space.available_space();
+                let used = total.saturating_sub(available);
+
+                drives.push(DriveInfo {
+                    name: "Macintosh HD".to_string(),
+                    path: "/".to_string(),
+                    total_bytes: total,
+                    available_bytes: available,
+                    used_bytes: used,
+                    total_formatted: format_size(total),
+                    available_formatted: format_size(available),
+                    used_formatted: format_size(used),
+                    usage_percent: (used as f32 / total as f32) * 100.0,
+                });
+            }
+        }
+    }
+
+    Ok(drives)
+}
+
+#[tauri::command]
 pub fn scan_desktop() -> Result<Vec<FileInfo>, String> {
     let desktop_path = get_desktop_path()?;
     scan_directory(desktop_path, false, false)

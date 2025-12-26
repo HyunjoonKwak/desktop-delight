@@ -6,7 +6,7 @@ use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::commands::scanner::FileInfo;
-use crate::services::classifier::{classify_extension, FileCategory};
+use crate::services::classifier::classify_extension;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -19,6 +19,10 @@ import type {
   CompareSummary,
   MergeOptions,
   MergeResult,
+  DriveInfo,
+  DefaultRule,
+  UnifiedPreview,
+  UnifiedOrganizeResult,
 } from './types';
 
 // Check if running in Tauri environment
@@ -54,6 +58,21 @@ export const fileApi = {
   getDesktopPath: async (): Promise<string> => {
     if (!isTauri()) return '';
     return invoke<string>('get_desktop_path');
+  },
+
+  getHomePath: async (): Promise<string> => {
+    if (!isTauri()) return '';
+    return invoke<string>('get_home_path');
+  },
+
+  getCommonPaths: async (): Promise<Array<[string, string]>> => {
+    if (!isTauri()) return [];
+    return invoke<Array<[string, string]>>('get_common_paths');
+  },
+
+  getDrives: async (): Promise<DriveInfo[]> => {
+    if (!isTauri()) return [];
+    return invoke<DriveInfo[]>('get_drives');
   },
 
   moveFile: async (
@@ -212,6 +231,45 @@ export const rulesApi = {
 
   executeRules: async (sourcePath: string): Promise<ExecuteRulesResult> => {
     return invoke<ExecuteRulesResult>('execute_rules', { sourcePath });
+  },
+
+  // Default category rules (기본 카테고리 규칙)
+  getDefaultRules: async (): Promise<DefaultRule[]> => {
+    if (!isTauri()) return [];
+    return invoke<DefaultRule[]>('get_default_rules');
+  },
+
+  saveDefaultRule: async (rule: DefaultRule): Promise<DefaultRule> => {
+    return invoke<DefaultRule>('save_default_rule', { rule });
+  },
+
+  // Unified organization (통합 정리)
+  previewUnified: async (sourcePath: string): Promise<UnifiedPreview[]> => {
+    if (!isTauri()) return [];
+    return invoke<UnifiedPreview[]>('preview_unified', { sourcePath });
+  },
+
+  executeUnified: async (sourcePath: string): Promise<UnifiedOrganizeResult> => {
+    return invoke<UnifiedOrganizeResult>('execute_unified', { sourcePath });
+  },
+};
+
+// Dialog API (폴더 선택 다이얼로그)
+export const dialogApi = {
+  pickFolder: async (title?: string): Promise<string | null> => {
+    if (!isTauri()) return null;
+    try {
+      const { open } = await import('@tauri-apps/plugin-dialog');
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: title || '폴더 선택',
+      });
+      return selected as string | null;
+    } catch (err) {
+      console.error('Failed to open folder picker:', err);
+      return null;
+    }
   },
 };
 
