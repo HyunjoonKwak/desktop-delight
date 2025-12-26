@@ -50,9 +50,9 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJFN0MwNzBBNjQ5Qzc5MTcKUldSWGVWV2J4Rkc1TVB3Sm80RVpZNHVsM0VDMW9rOEgyNzl6dlFrYUhIajhPbzdYQVVxQVJ0dGkK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDRFQkI2MTYxQUJBODczOUYKUldTZmM2aXJZV0c3VG5Ed1poZUhjRGgvR1ZmZEpPazZTUWdTWElwT2hjQjN1Rk9razBCdW9DY3kK",
       "endpoints": [
-        "https://github.com/your-org/desktop-organizer/releases/latest/download/latest.json"
+        "https://github.com/HyunjoonKwak/desktop-delight/releases/latest/download/latest.json"
       ]
     }
   }
