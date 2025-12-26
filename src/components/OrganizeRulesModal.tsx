@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   X,
@@ -15,32 +15,18 @@ import {
   Calendar,
   HardDrive,
   Tag,
-  Clock,
-  CheckCircle2,
   ChevronDown,
   Sparkles,
   Save,
+  Loader2,
 } from "lucide-react";
-
-interface OrganizeRule {
-  id: string;
-  name: string;
-  enabled: boolean;
-  condition: {
-    type: "extension" | "size" | "date" | "name";
-    operator: string;
-    value: string;
-  };
-  action: {
-    type: "move" | "rename" | "tag";
-    destination: string;
-  };
-}
+import { rulesApi, isTauri } from "@/lib/tauri-api";
+import type { Rule, Condition } from "@/lib/types";
 
 interface OrganizeRulesModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (rules: OrganizeRule[]) => void;
+  onSave?: (rules: Rule[]) => void;
 }
 
 const conditionTypes = [
@@ -72,7 +58,48 @@ const nameOperators = [
   { id: "contains", label: "포함" },
   { id: "startsWith", label: "시작" },
   { id: "endsWith", label: "끝" },
+  { id: "matches", label: "정규식" },
 ];
+
+// Map condition types between frontend and backend
+const conditionFieldMap: Record<string, Condition["field"]> = {
+  extension: "extension",
+  size: "size",
+  date: "modifiedDate",
+  name: "name",
+};
+
+const conditionFieldReverseMap: Record<string, string> = {
+  extension: "extension",
+  size: "size",
+  modifiedDate: "date",
+  createdDate: "date",
+  name: "name",
+};
+
+const operatorMap: Record<string, Condition["operator"]> = {
+  is: "equals",
+  contains: "contains",
+  startsWith: "startsWith",
+  endsWith: "endsWith",
+  gt: "greaterThan",
+  lt: "lessThan",
+  eq: "equals",
+  within: "lessThan",
+  before: "lessThan",
+  after: "greaterThan",
+  matches: "matches",
+};
+
+const operatorReverseMap: Record<string, string> = {
+  equals: "is",
+  contains: "contains",
+  startsWith: "startsWith",
+  endsWith: "endsWith",
+  greaterThan: "gt",
+  lessThan: "lt",
+  matches: "matches",
+};
 
 const defaultFolders = [
   { id: "images", label: "이미지", icon: Image, color: "hsl(340, 82%, 52%)" },
@@ -83,40 +110,95 @@ const defaultFolders = [
   { id: "code", label: "소스코드", icon: Code, color: "hsl(180, 70%, 45%)" },
 ];
 
-const defaultRules: OrganizeRule[] = [
-  {
-    id: "1",
-    name: "이미지 파일 정리",
-    enabled: true,
-    condition: { type: "extension", operator: "is", value: ".jpg, .png, .gif" },
-    action: { type: "move", destination: "이미지" },
-  },
-  {
-    id: "2",
-    name: "대용량 파일 분류",
-    enabled: true,
-    condition: { type: "size", operator: "gt", value: "100MB" },
-    action: { type: "move", destination: "대용량 파일" },
-  },
-  {
-    id: "3",
-    name: "오래된 파일 정리",
-    enabled: false,
-    condition: { type: "date", operator: "before", value: "30일" },
-    action: { type: "move", destination: "오래된 파일" },
-  },
-];
+// UI Rule type for local state management
+interface UIRule {
+  id: string;
+  dbId?: number;
+  name: string;
+  enabled: boolean;
+  condition: {
+    type: "extension" | "size" | "date" | "name";
+    operator: string;
+    value: string;
+  };
+  action: {
+    type: "move" | "copy" | "rename" | "delete";
+    destination: string;
+  };
+}
+
+// Convert backend Rule to UI Rule
+const toUIRule = (rule: Rule): UIRule => {
+  const firstCondition = rule.conditions[0] || { field: "name", operator: "contains", value: "" };
+  return {
+    id: String(rule.id || Date.now()),
+    dbId: rule.id,
+    name: rule.name,
+    enabled: rule.enabled,
+    condition: {
+      type: (conditionFieldReverseMap[firstCondition.field] || "name") as UIRule["condition"]["type"],
+      operator: operatorReverseMap[firstCondition.operator] || "contains",
+      value: firstCondition.value,
+    },
+    action: {
+      type: rule.actionType as UIRule["action"]["type"],
+      destination: rule.actionDestination || "",
+    },
+  };
+};
+
+// Convert UI Rule to backend Rule
+const toBackendRule = (uiRule: UIRule): Rule => ({
+  id: uiRule.dbId,
+  name: uiRule.name,
+  priority: 0,
+  enabled: uiRule.enabled,
+  conditions: [
+    {
+      field: conditionFieldMap[uiRule.condition.type] || "name",
+      operator: operatorMap[uiRule.condition.operator] || "contains",
+      value: uiRule.condition.value,
+    },
+  ],
+  conditionLogic: "AND",
+  actionType: uiRule.action.type,
+  actionDestination: uiRule.action.destination,
+  createDateSubfolder: false,
+});
 
 export default function OrganizeRulesModal({
   isOpen,
   onClose,
   onSave,
 }: OrganizeRulesModalProps) {
-  const [rules, setRules] = useState<OrganizeRule[]>(defaultRules);
+  const [rules, setRules] = useState<UIRule[]>([]);
   const [editingRule, setEditingRule] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Load rules from database when modal opens
+  useEffect(() => {
+    const loadRules = async () => {
+      if (!isOpen) return;
+
+      setLoading(true);
+      try {
+        const dbRules = await rulesApi.getRules();
+        setRules(dbRules.map(toUIRule));
+      } catch (err) {
+        console.error("Failed to load rules:", err);
+        // Use empty list if loading fails
+        setRules([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadRules();
+  }, [isOpen]);
 
   const addNewRule = () => {
-    const newRule: OrganizeRule = {
+    const newRule: UIRule = {
       id: `${Date.now()}`,
       name: "새 규칙",
       enabled: true,
@@ -127,7 +209,15 @@ export default function OrganizeRulesModal({
     setEditingRule(newRule.id);
   };
 
-  const deleteRule = (id: string) => {
+  const deleteRule = async (id: string) => {
+    const rule = rules.find((r) => r.id === id);
+    if (rule?.dbId && isTauri()) {
+      try {
+        await rulesApi.deleteRule(rule.dbId);
+      } catch (err) {
+        console.error("Failed to delete rule:", err);
+      }
+    }
     setRules(rules.filter((r) => r.id !== id));
   };
 
@@ -137,8 +227,27 @@ export default function OrganizeRulesModal({
     );
   };
 
-  const updateRule = (id: string, updates: Partial<OrganizeRule>) => {
+  const updateRule = (id: string, updates: Partial<UIRule>) => {
     setRules(rules.map((r) => (r.id === id ? { ...r, ...updates } : r)));
+  };
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      // Save all rules to database
+      const savedRules: Rule[] = [];
+      for (const uiRule of rules) {
+        const backendRule = toBackendRule(uiRule);
+        const saved = await rulesApi.saveRule(backendRule);
+        savedRules.push(saved);
+      }
+      onSave?.(savedRules);
+      onClose();
+    } catch (err) {
+      console.error("Failed to save rules:", err);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const getOperators = (type: string) => {
@@ -215,6 +324,12 @@ export default function OrganizeRulesModal({
 
             {/* Content */}
             <div className="flex-1 overflow-auto p-5">
+              {loading ? (
+                <div className="flex items-center justify-center h-40">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                </div>
+              ) : (
+                <>
               {/* Quick Folders */}
               <div className="mb-6">
                 <h3 className="text-sm font-medium text-foreground mb-3">
@@ -361,7 +476,7 @@ export default function OrganizeRulesModal({
                                     updateRule(rule.id, {
                                       condition: {
                                         ...rule.condition,
-                                        type: e.target.value as OrganizeRule["condition"]["type"],
+                                        type: e.target.value as UIRule["condition"]["type"],
                                         operator: getOperators(e.target.value)[0].id,
                                       },
                                     })
@@ -421,15 +536,15 @@ export default function OrganizeRulesModal({
                                     updateRule(rule.id, {
                                       action: {
                                         ...rule.action,
-                                        type: e.target.value as OrganizeRule["action"]["type"],
+                                        type: e.target.value as UIRule["action"]["type"],
                                       },
                                     })
                                   }
                                   className="w-32 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                                 >
                                   <option value="move">폴더로 이동</option>
-                                  <option value="rename">이름 변경</option>
-                                  <option value="tag">태그 추가</option>
+                                  <option value="copy">폴더로 복사</option>
+                                  <option value="delete">삭제</option>
                                 </select>
                                 <div className="flex-1 relative">
                                   <Folder className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
@@ -468,6 +583,8 @@ export default function OrganizeRulesModal({
                   </motion.button>
                 </div>
               </div>
+              </>
+              )}
             </div>
 
             {/* Footer */}
@@ -479,16 +596,18 @@ export default function OrganizeRulesModal({
                 취소
               </button>
               <motion.button
-                onClick={() => {
-                  onSave(rules);
-                  onClose();
-                }}
-                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity"
-                whileHover={{ scale: 1.02 }}
-                whileTap={{ scale: 0.98 }}
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium gradient-primary text-primary-foreground shadow-glow hover:opacity-90 transition-opacity disabled:opacity-50"
+                whileHover={{ scale: saving ? 1 : 1.02 }}
+                whileTap={{ scale: saving ? 1 : 0.98 }}
               >
-                <Save className="w-4 h-4" />
-                <span>규칙 저장</span>
+                {saving ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4" />
+                )}
+                <span>{saving ? "저장 중..." : "규칙 저장"}</span>
               </motion.button>
             </div>
           </motion.div>

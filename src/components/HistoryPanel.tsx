@@ -13,7 +13,7 @@ import {
 
 export interface HistoryItem {
   id: string;
-  type: "rename" | "move" | "organize" | "delete" | "sort";
+  type: "rename" | "move" | "copy" | "organize" | "delete" | "sort";
   description: string;
   details: string;
   timestamp: Date;
@@ -31,6 +31,7 @@ interface HistoryPanelProps {
 const typeIcons = {
   rename: FileText,
   move: FolderOpen,
+  copy: FolderOpen,
   organize: Sparkles,
   delete: Trash2,
   sort: History,
@@ -39,6 +40,7 @@ const typeIcons = {
 const typeColors = {
   rename: "hsl(270, 70%, 55%)",
   move: "hsl(207, 90%, 54%)",
+  copy: "hsl(180, 70%, 45%)",
   organize: "hsl(160, 84%, 39%)",
   delete: "hsl(0, 72%, 51%)",
   sort: "hsl(35, 92%, 50%)",
@@ -47,6 +49,7 @@ const typeColors = {
 const typeLabels = {
   rename: "이름 변경",
   move: "파일 이동",
+  copy: "파일 복사",
   organize: "자동 정리",
   delete: "파일 삭제",
   sort: "정렬 변경",

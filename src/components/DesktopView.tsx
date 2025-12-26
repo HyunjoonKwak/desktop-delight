@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   MonitorUp,
@@ -17,48 +17,60 @@ import {
   X,
   History,
   Settings2,
+  RefreshCw,
+  Code,
+  Package,
+  File,
 } from "lucide-react";
 import FileCard from "./FileCard";
 import HistoryPanel, { HistoryItem } from "./HistoryPanel";
 import FileDetailPanel from "./FileDetailPanel";
 import OrganizeRulesModal from "./OrganizeRulesModal";
 import { useToast } from "@/hooks/use-toast";
+import { fileApi, historyApi, organizerApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
+import type { FileInfo, FileCategory } from "@/lib/types";
 
-type FileType = "image" | "document" | "video" | "audio" | "archive" | "code";
 type SortKey = "name" | "date" | "size";
 type SortOrder = "asc" | "desc";
 
-interface MockFile {
-  id: number;
-  name: string;
-  type: FileType;
-  size: string;
-  sizeBytes: number;
-  date: string;
-  dateTimestamp: number;
-}
+// Map FileCategory to legacy type for FileCard compatibility
+const categoryToType: Record<FileCategory, string> = {
+  images: "image",
+  documents: "document",
+  videos: "video",
+  music: "audio",
+  archives: "archive",
+  installers: "archive",
+  code: "code",
+  others: "document",
+};
 
-const mockDesktopFiles: MockFile[] = [
-  { id: 1, name: "프로젝트_최종.psd", type: "image", size: "245MB", sizeBytes: 245000000, date: "오늘", dateTimestamp: Date.now() },
-  { id: 2, name: "회의록_2024.docx", type: "document", size: "1.2MB", sizeBytes: 1200000, date: "어제", dateTimestamp: Date.now() - 86400000 },
-  { id: 3, name: "홍보영상.mp4", type: "video", size: "1.8GB", sizeBytes: 1800000000, date: "3일 전", dateTimestamp: Date.now() - 259200000 },
-  { id: 4, name: "배경음악.mp3", type: "audio", size: "8.5MB", sizeBytes: 8500000, date: "1주 전", dateTimestamp: Date.now() - 604800000 },
-  { id: 5, name: "자료.zip", type: "archive", size: "156MB", sizeBytes: 156000000, date: "2주 전", dateTimestamp: Date.now() - 1209600000 },
-  { id: 6, name: "스크린샷_001.png", type: "image", size: "2.1MB", sizeBytes: 2100000, date: "오늘", dateTimestamp: Date.now() - 3600000 },
-  { id: 7, name: "계약서.pdf", type: "document", size: "890KB", sizeBytes: 890000, date: "오늘", dateTimestamp: Date.now() - 7200000 },
-  { id: 8, name: "index.tsx", type: "code", size: "12KB", sizeBytes: 12000, date: "어제", dateTimestamp: Date.now() - 100800000 },
+// Categories for the filter UI
+const categories = [
+  { id: "images", label: "이미지", icon: Image, color: "hsl(340, 82%, 52%)" },
+  { id: "documents", label: "문서", icon: FileText, color: "hsl(207, 90%, 54%)" },
+  { id: "videos", label: "동영상", icon: Video, color: "hsl(270, 70%, 55%)" },
+  { id: "music", label: "음악", icon: Music, color: "hsl(160, 84%, 39%)" },
+  { id: "archives", label: "압축파일", icon: Archive, color: "hsl(35, 92%, 50%)" },
+  { id: "code", label: "코드", icon: Code, color: "hsl(200, 70%, 50%)" },
 ];
 
-const categories = [
-  { id: "image", label: "이미지", icon: Image, color: "hsl(340, 82%, 52%)" },
-  { id: "document", label: "문서", icon: FileText, color: "hsl(207, 90%, 54%)" },
-  { id: "video", label: "동영상", icon: Video, color: "hsl(270, 70%, 55%)" },
-  { id: "audio", label: "오디오", icon: Music, color: "hsl(160, 84%, 39%)" },
-  { id: "archive", label: "압축파일", icon: Archive, color: "hsl(35, 92%, 50%)" },
+// Mock data for development without Tauri
+const mockDesktopFiles: FileInfo[] = [
+  { path: "/desktop/프로젝트_최종.psd", name: "프로젝트_최종.psd", extension: ".psd", size: 245000000, sizeFormatted: "245MB", createdAt: new Date().toISOString(), modifiedAt: new Date().toISOString(), isDirectory: false, isHidden: false, category: "images" },
+  { path: "/desktop/회의록_2024.docx", name: "회의록_2024.docx", extension: ".docx", size: 1200000, sizeFormatted: "1.2MB", createdAt: new Date(Date.now() - 86400000).toISOString(), modifiedAt: new Date(Date.now() - 86400000).toISOString(), isDirectory: false, isHidden: false, category: "documents" },
+  { path: "/desktop/홍보영상.mp4", name: "홍보영상.mp4", extension: ".mp4", size: 1800000000, sizeFormatted: "1.8GB", createdAt: new Date(Date.now() - 259200000).toISOString(), modifiedAt: new Date(Date.now() - 259200000).toISOString(), isDirectory: false, isHidden: false, category: "videos" },
+  { path: "/desktop/배경음악.mp3", name: "배경음악.mp3", extension: ".mp3", size: 8500000, sizeFormatted: "8.5MB", createdAt: new Date(Date.now() - 604800000).toISOString(), modifiedAt: new Date(Date.now() - 604800000).toISOString(), isDirectory: false, isHidden: false, category: "music" },
+  { path: "/desktop/자료.zip", name: "자료.zip", extension: ".zip", size: 156000000, sizeFormatted: "156MB", createdAt: new Date(Date.now() - 1209600000).toISOString(), modifiedAt: new Date(Date.now() - 1209600000).toISOString(), isDirectory: false, isHidden: false, category: "archives" },
+  { path: "/desktop/스크린샷_001.png", name: "스크린샷_001.png", extension: ".png", size: 2100000, sizeFormatted: "2.1MB", createdAt: new Date(Date.now() - 3600000).toISOString(), modifiedAt: new Date(Date.now() - 3600000).toISOString(), isDirectory: false, isHidden: false, category: "images" },
+  { path: "/desktop/계약서.pdf", name: "계약서.pdf", extension: ".pdf", size: 890000, sizeFormatted: "890KB", createdAt: new Date(Date.now() - 7200000).toISOString(), modifiedAt: new Date(Date.now() - 7200000).toISOString(), isDirectory: false, isHidden: false, category: "documents" },
+  { path: "/desktop/index.tsx", name: "index.tsx", extension: ".tsx", size: 12000, sizeFormatted: "12KB", createdAt: new Date(Date.now() - 100800000).toISOString(), modifiedAt: new Date(Date.now() - 100800000).toISOString(), isDirectory: false, isHidden: false, category: "code" },
 ];
 
 export default function DesktopView() {
-  const [selectedFiles, setSelectedFiles] = useState<number[]>([]);
+  const [files, setFiles] = useState<FileInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
   const [isOrganizing, setIsOrganizing] = useState(false);
   const [organized, setOrganized] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -68,12 +80,73 @@ export default function DesktopView() {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
-  const [selectedFileForDetail, setSelectedFileForDetail] = useState<number | null>(null);
+  const [selectedFileForDetail, setSelectedFileForDetail] = useState<string | null>(null);
   const { toast } = useToast();
 
+  // Load files on mount
+  const loadFiles = useCallback(async () => {
+    setIsLoading(true);
+    try {
+      if (isTauri()) {
+        const desktopFiles = await fileApi.scanDesktop();
+        setFiles(desktopFiles.filter(f => !f.isDirectory));
+      } else {
+        // Use mock data for development
+        setFiles(mockDesktopFiles);
+      }
+    } catch (error) {
+      console.error("Failed to load files:", error);
+      toast({
+        title: "파일 로드 실패",
+        description: "바탕화면 파일을 불러오는데 실패했습니다.",
+        variant: "destructive",
+      });
+      // Fallback to mock data
+      setFiles(mockDesktopFiles);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [toast]);
+
+  // Load history
+  const loadHistory = useCallback(async () => {
+    try {
+      if (isTauri()) {
+        const historyItems = await historyApi.getHistory(50, 0);
+        setHistory(historyItems.map(item => ({
+          id: String(item.id),
+          type: item.operationType as HistoryItem["type"],
+          description: item.description,
+          details: item.details || "",
+          timestamp: new Date(item.createdAt),
+          undone: item.isUndone,
+        })));
+      }
+    } catch (error) {
+      console.error("Failed to load history:", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadFiles();
+    loadHistory();
+  }, [loadFiles, loadHistory]);
+
+  // Find file by path for detail panel
   const detailFile = selectedFileForDetail
-    ? mockDesktopFiles.find((f) => f.id === selectedFileForDetail) || null
+    ? files.find((f) => f.path === selectedFileForDetail) || null
     : null;
+
+  // Convert FileInfo to legacy format for FileDetailPanel
+  const detailFileLegacy = detailFile ? {
+    id: 0,
+    name: detailFile.name,
+    type: categoryToType[detailFile.category] as "image" | "document" | "video" | "audio" | "archive" | "code",
+    size: detailFile.sizeFormatted,
+    sizeBytes: detailFile.size,
+    date: formatRelativeDate(detailFile.modifiedAt),
+    dateTimestamp: new Date(detailFile.modifiedAt).getTime(),
+  } : null;
 
   const addToHistory = (item: Omit<HistoryItem, "id" | "timestamp">) => {
     const newItem: HistoryItem = {
@@ -85,39 +158,39 @@ export default function DesktopView() {
   };
 
   const filteredAndSortedFiles = useMemo(() => {
-    let files = [...mockDesktopFiles];
+    let filtered = [...files];
 
     // Filter by search query
     if (searchQuery) {
-      files = files.filter((file) =>
+      filtered = filtered.filter((file) =>
         file.name.toLowerCase().includes(searchQuery.toLowerCase())
       );
     }
 
     // Filter by type
     if (activeTypeFilter) {
-      files = files.filter((file) => file.type === activeTypeFilter);
+      filtered = filtered.filter((file) => file.category === activeTypeFilter);
     }
 
     // Sort files
-    files.sort((a, b) => {
+    filtered.sort((a, b) => {
       let comparison = 0;
       switch (sortKey) {
         case "name":
           comparison = a.name.localeCompare(b.name, "ko");
           break;
         case "date":
-          comparison = b.dateTimestamp - a.dateTimestamp;
+          comparison = new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
           break;
         case "size":
-          comparison = b.sizeBytes - a.sizeBytes;
+          comparison = b.size - a.size;
           break;
       }
       return sortOrder === "asc" ? comparison : -comparison;
     });
 
-    return files;
-  }, [searchQuery, sortKey, sortOrder, activeTypeFilter]);
+    return filtered;
+  }, [files, searchQuery, sortKey, sortOrder, activeTypeFilter]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -127,7 +200,6 @@ export default function DesktopView() {
       setSortOrder("asc");
     }
 
-    // Add to history
     const sortLabels = { name: "이름", date: "날짜", size: "크기" };
     addToHistory({
       type: "sort",
@@ -145,57 +217,124 @@ export default function DesktopView() {
     );
   };
 
-  const toggleSelect = (id: number, isDoubleClick?: boolean) => {
+  const toggleSelect = (path: string, isDoubleClick?: boolean) => {
     if (isDoubleClick) {
-      setSelectedFileForDetail(id);
+      setSelectedFileForDetail(path);
     } else {
       setSelectedFiles((prev) =>
-        prev.includes(id) ? prev.filter((f) => f !== id) : [...prev, id]
+        prev.includes(path) ? prev.filter((f) => f !== path) : [...prev, path]
       );
     }
   };
 
-  const handleOrganize = () => {
+  const handleOrganize = async () => {
     setIsOrganizing(true);
-    setTimeout(() => {
-      setIsOrganizing(false);
-      setOrganized(true);
-      addToHistory({
-        type: "organize",
-        description: "바탕화면 자동 정리",
-        details: `${mockDesktopFiles.length}개 파일을 유형별로 분류했습니다`,
-      });
+
+    try {
+      if (isTauri()) {
+        // Get desktop path and execute organization
+        const desktopPath = await fileApi.getDesktopPath();
+        const result = await organizerApi.executeOrganization(desktopPath, {
+          createDateSubfolders: false,
+          dateFormat: "YYYY-MM",
+          handleDuplicates: "rename",
+        });
+
+        if (result.success) {
+          setOrganized(true);
+          addToHistory({
+            type: "organize",
+            description: "바탕화면 자동 정리",
+            details: `${result.filesMoved}개 파일을 유형별로 분류했습니다`,
+          });
+          toast({
+            title: "정리 완료",
+            description: `${result.filesMoved}개 파일이 정리되었습니다.${result.filesSkipped > 0 ? ` (${result.filesSkipped}개 건너뜀)` : ''}`,
+          });
+          // Reload files to show updated state
+          await loadFiles();
+          await loadHistory();
+        } else {
+          toast({
+            title: "정리 부분 완료",
+            description: `${result.filesMoved}개 파일 정리됨. 오류: ${result.errors.length}개`,
+            variant: "destructive",
+          });
+        }
+      } else {
+        // Simulate for development
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        setOrganized(true);
+        addToHistory({
+          type: "organize",
+          description: "바탕화면 자동 정리",
+          details: `${files.length}개 파일을 유형별로 분류했습니다`,
+        });
+        toast({
+          title: "정리 완료",
+          description: "바탕화면 파일이 유형별로 정리되었습니다.",
+        });
+      }
+    } catch (error) {
+      console.error("Organization failed:", error);
       toast({
-        title: "정리 완료",
-        description: "바탕화면 파일이 유형별로 정리되었습니다.",
+        title: "정리 실패",
+        description: "파일 정리 중 오류가 발생했습니다.",
+        variant: "destructive",
       });
-    }, 2000);
-  };
-
-  const handleUndo = (id: string) => {
-    setHistory((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, undone: true } : item
-      )
-    );
-
-    const item = history.find((h) => h.id === id);
-    if (item?.type === "organize") {
-      setOrganized(false);
+    } finally {
+      setIsOrganizing(false);
     }
-
-    toast({
-      title: "되돌리기 완료",
-      description: "작업이 취소되었습니다.",
-    });
   };
 
-  const handleClearHistory = () => {
-    setHistory([]);
-    toast({
-      title: "히스토리 삭제",
-      description: "모든 작업 기록이 삭제되었습니다.",
-    });
+  const handleUndo = async (id: string) => {
+    try {
+      if (isTauri()) {
+        await historyApi.undoOperation(Number(id));
+      }
+
+      setHistory((prev) =>
+        prev.map((item) =>
+          item.id === id ? { ...item, undone: true } : item
+        )
+      );
+
+      const item = history.find((h) => h.id === id);
+      if (item?.type === "organize") {
+        setOrganized(false);
+        await loadFiles(); // Reload files after undo
+      }
+
+      toast({
+        title: "되돌리기 완료",
+        description: "작업이 취소되었습니다.",
+      });
+    } catch (error) {
+      toast({
+        title: "되돌리기 실패",
+        description: "작업을 취소하는데 실패했습니다.",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const handleClearHistory = async () => {
+    try {
+      if (isTauri()) {
+        await historyApi.clearHistory();
+      }
+      setHistory([]);
+      toast({
+        title: "히스토리 삭제",
+        description: "모든 작업 기록이 삭제되었습니다.",
+      });
+    } catch (error) {
+      toast({
+        title: "삭제 실패",
+        description: "히스토리 삭제에 실패했습니다.",
+        variant: "destructive",
+      });
+    }
   };
 
   const clearFilters = () => {
@@ -203,6 +342,11 @@ export default function DesktopView() {
     setActiveTypeFilter(null);
     setSortKey("name");
     setSortOrder("asc");
+  };
+
+  const handleRefresh = () => {
+    setOrganized(false);
+    loadFiles();
   };
 
   return (
@@ -218,12 +362,24 @@ export default function DesktopView() {
               바탕화면 정리
             </h1>
             <p className="text-sm text-muted-foreground">
-              {mockDesktopFiles.length}개의 파일 · {selectedFiles.length}개 선택됨
+              {isLoading ? "로딩 중..." : `${files.length}개의 파일 · ${selectedFiles.length}개 선택됨`}
             </p>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
+          {/* Refresh Button */}
+          <motion.button
+            onClick={handleRefresh}
+            disabled={isLoading}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all disabled:opacity-50"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <RefreshCw className={`w-5 h-5 ${isLoading ? 'animate-spin' : ''}`} />
+            <span>새로고침</span>
+          </motion.button>
+
           {/* Rules Button */}
           <motion.button
             onClick={() => setIsRulesModalOpen(true)}
@@ -254,12 +410,12 @@ export default function DesktopView() {
           {/* Organize Button */}
           <motion.button
             onClick={handleOrganize}
-            disabled={isOrganizing || organized}
+            disabled={isOrganizing || organized || isLoading}
             className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all ${
               organized
                 ? "bg-accent/20 text-accent"
                 : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
-            }`}
+            } disabled:opacity-50`}
             whileHover={{ scale: 1.02 }}
             whileTap={{ scale: 0.98 }}
           >
@@ -289,9 +445,9 @@ export default function DesktopView() {
       </div>
 
       {/* Categories Overview - Clickable Filter */}
-      <div className="grid grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-6 gap-4 mb-8">
         {categories.map((cat, index) => {
-          const count = mockDesktopFiles.filter((f) => f.type === cat.id).length;
+          const count = files.filter((f) => f.category === cat.id).length;
           const isActive = activeTypeFilter === cat.id;
           return (
             <motion.div
@@ -406,7 +562,7 @@ export default function DesktopView() {
           </h2>
           <div className="flex gap-2">
             <button
-              onClick={() => setSelectedFiles(filteredAndSortedFiles.map((f) => f.id))}
+              onClick={() => setSelectedFiles(filteredAndSortedFiles.map((f) => f.path))}
               className="px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors"
             >
               전체 선택
@@ -421,16 +577,26 @@ export default function DesktopView() {
         </div>
 
         <AnimatePresence mode="wait">
-          {organized ? (
+          {isLoading ? (
             <motion.div
-              className="grid grid-cols-5 gap-4"
+              className="flex flex-col items-center justify-center py-16 text-muted-foreground"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              key="loading"
+            >
+              <RefreshCw className="w-12 h-12 mb-4 animate-spin opacity-50" />
+              <p className="text-sm">파일을 불러오는 중...</p>
+            </motion.div>
+          ) : organized ? (
+            <motion.div
+              className="grid grid-cols-6 gap-4"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               key="organized"
             >
               {categories.map((cat) => {
-                const files = mockDesktopFiles.filter((f) => f.type === cat.id);
-                if (files.length === 0) return null;
+                const catFiles = files.filter((f) => f.category === cat.id);
+                if (catFiles.length === 0) return null;
                 return (
                   <motion.div
                     key={cat.id}
@@ -446,14 +612,19 @@ export default function DesktopView() {
                       <span className="text-sm font-medium">{cat.label}</span>
                     </div>
                     <div className="space-y-2">
-                      {files.map((file) => (
+                      {catFiles.slice(0, 5).map((file) => (
                         <div
-                          key={file.id}
+                          key={file.path}
                           className="text-xs text-muted-foreground truncate"
                         >
                           {file.name}
                         </div>
                       ))}
+                      {catFiles.length > 5 && (
+                        <div className="text-xs text-primary">
+                          +{catFiles.length - 5}개 더
+                        </div>
+                      )}
                     </div>
                   </motion.div>
                 );
@@ -467,13 +638,17 @@ export default function DesktopView() {
               key="empty"
             >
               <Search className="w-12 h-12 mb-4 opacity-50" />
-              <p className="text-sm">검색 결과가 없습니다</p>
-              <button
-                onClick={clearFilters}
-                className="mt-2 text-xs text-primary hover:underline"
-              >
-                필터 초기화
-              </button>
+              <p className="text-sm">
+                {searchQuery || activeTypeFilter ? "검색 결과가 없습니다" : "바탕화면에 파일이 없습니다"}
+              </p>
+              {(searchQuery || activeTypeFilter) && (
+                <button
+                  onClick={clearFilters}
+                  className="mt-2 text-xs text-primary hover:underline"
+                >
+                  필터 초기화
+                </button>
+              )}
             </motion.div>
           ) : (
             <motion.div
@@ -484,14 +659,14 @@ export default function DesktopView() {
             >
               {filteredAndSortedFiles.map((file) => (
                 <FileCard
-                  key={file.id}
+                  key={file.path}
                   name={file.name}
-                  type={file.type}
-                  size={file.size}
-                  date={file.date}
-                  selected={selectedFiles.includes(file.id)}
-                  onClick={() => toggleSelect(file.id)}
-                  onDoubleClick={() => toggleSelect(file.id, true)}
+                  type={categoryToType[file.category] as "image" | "document" | "video" | "audio" | "archive" | "code"}
+                  size={file.sizeFormatted}
+                  date={formatRelativeDate(file.modifiedAt)}
+                  selected={selectedFiles.includes(file.path)}
+                  onClick={() => toggleSelect(file.path)}
+                  onDoubleClick={() => toggleSelect(file.path, true)}
                 />
               ))}
             </motion.div>
@@ -510,7 +685,7 @@ export default function DesktopView() {
 
       {/* File Detail Panel */}
       <FileDetailPanel
-        file={detailFile}
+        file={detailFileLegacy}
         isOpen={selectedFileForDetail !== null}
         onClose={() => setSelectedFileForDetail(null)}
       />

@@ -1,73 +1,60 @@
-# Welcome to your Lovable project
+# Desktop Organizer Pro
 
-## Project info
+Windows와 macOS에서 사용 가능한 데스크톱 파일 정리 프로그램입니다.
 
-**URL**: https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID
+## 주요 기능
 
-## How can I edit this code?
+- **바탕화면 정리**: 파일을 유형별로 자동 분류 (이미지, 문서, 비디오, 음악, 압축파일 등)
+- **일괄 이름 변경**: 접두사/접미사, 일련번호, 날짜, 정규식 기반 파일명 변경
+- **확장자 분류**: 확장자별 또는 카테고리별로 파일 정리
+- **폴더 매니저**: 폴더 트리 시각화, 중복/빈폴더/대용량 파일 검색
 
-There are several ways of editing your application.
+## 기술 스택
 
-**Use Lovable**
+- **Frontend**: React 18, TypeScript, Tailwind CSS, shadcn/ui, Framer Motion
+- **Backend**: Tauri v2 (Rust)
+- **Database**: SQLite
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and start prompting.
+## 개발 환경 설정
 
-Changes made via Lovable will be committed automatically to this repo.
+### 사전 요구사항
 
-**Use your preferred IDE**
+- Node.js 18+
+- Rust (https://rustup.rs)
+- 플랫폼별 빌드 도구:
+  - **Windows**: Microsoft C++ Build Tools
+  - **macOS**: Xcode Command Line Tools
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+### 설치 및 실행
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+```bash
+# 의존성 설치
+npm install
 
-Follow these steps:
+# 개발 모드 실행
+npm run tauri dev
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
-
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
-
-# Step 3: Install the necessary dependencies.
-npm i
-
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
+# 프로덕션 빌드
+npm run tauri build
 ```
 
-**Edit a file directly in GitHub**
+## 프로젝트 구조
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+```
+├── src/                  # React 프론트엔드
+│   ├── components/       # UI 컴포넌트
+│   ├── hooks/            # 커스텀 훅
+│   ├── lib/              # 유틸리티
+│   └── stores/           # Zustand 상태 관리
+├── src-tauri/            # Rust 백엔드
+│   ├── src/
+│   │   ├── commands/     # Tauri IPC 명령
+│   │   ├── database/     # SQLite 작업
+│   │   └── services/     # 비즈니스 로직
+│   └── Cargo.toml
+└── package.json
+```
 
-**Use GitHub Codespaces**
+## 라이선스
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/REPLACE_WITH_PROJECT_ID) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+MIT

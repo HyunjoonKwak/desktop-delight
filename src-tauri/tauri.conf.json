@@ -1,0 +1,59 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "Desktop Organizer Pro",
+  "version": "1.0.0",
+  "identifier": "com.desktoporganizer.pro",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://localhost:1420",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Desktop Organizer Pro",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "category": "Utility",
+    "shortDescription": "데스크톱 파일 정리 프로그램",
+    "longDescription": "Windows와 macOS에서 바탕화면 파일을 자동으로 분류하고 정리하는 데스크톱 애플리케이션",
+    "windows": {
+      "wix": {
+        "language": "ko-KR"
+      }
+    },
+    "macOS": {
+      "minimumSystemVersion": "10.15"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJFN0MwNzBBNjQ5Qzc5MTcKUldSWGVWV2J4Rkc1TVB3Sm80RVpZNHVsM0VDMW9rOEgyNzl6dlFrYUhIajhPbzdYQVVxQVJ0dGkK",
+      "endpoints": [
+        "https://github.com/your-org/desktop-organizer/releases/latest/download/latest.json"
+      ]
+    }
+  }
+}
