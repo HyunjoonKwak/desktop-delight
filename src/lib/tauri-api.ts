@@ -16,6 +16,9 @@ import type {
   Rule,
   RuleMatch,
   ExecuteRulesResult,
+  CompareSummary,
+  MergeOptions,
+  MergeResult,
 } from './types';
 
 // Check if running in Tauri environment
@@ -325,6 +328,27 @@ export const backupApi = {
   deleteBackup: async (backupPath: string): Promise<void> => {
     if (!isTauri()) return;
     return invoke<void>('delete_backup', { backupPath });
+  },
+};
+
+// Folder Compare API
+export const folderCompareApi = {
+  compareFolders: async (sourcePath: string, targetPath: string): Promise<CompareSummary> => {
+    if (!isTauri()) {
+      throw new Error('Folder compare is only available in desktop app');
+    }
+    return invoke<CompareSummary>('compare_folders', { sourcePath, targetPath });
+  },
+
+  mergeFolders: async (
+    sourcePath: string,
+    targetPath: string,
+    options: MergeOptions
+  ): Promise<MergeResult> => {
+    if (!isTauri()) {
+      throw new Error('Folder merge is only available in desktop app');
+    }
+    return invoke<MergeResult>('merge_folders', { sourcePath, targetPath, options });
   },
 };
 

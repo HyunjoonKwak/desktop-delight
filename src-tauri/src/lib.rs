@@ -134,6 +134,9 @@ pub fn run() {
             commands::watcher::stop_watching,
             commands::watcher::is_watching,
             commands::watcher::get_watching_path,
+            // Folder compare commands
+            commands::folder_compare::compare_folders,
+            commands::folder_compare::merge_folders,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

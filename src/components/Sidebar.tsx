@@ -10,6 +10,7 @@ import {
   ChevronRight,
   HardDrive,
   Copy,
+  GitCompare,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -23,6 +24,7 @@ const menuItems = [
   { id: "batch-rename", label: "일괄 이름 변경", icon: FileText },
   { id: "extension-sort", label: "확장자 분류", icon: FileType },
   { id: "duplicate-manager", label: "중복 파일 관리", icon: Copy },
+  { id: "folder-compare", label: "폴더 비교 & 머지", icon: GitCompare },
 ];
 
 const drives = [

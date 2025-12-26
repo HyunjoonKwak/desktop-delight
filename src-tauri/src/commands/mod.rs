@@ -1,5 +1,6 @@
 pub mod analyzer;
 pub mod file_ops;
+pub mod folder_compare;
 pub mod history;
 pub mod organizer;
 pub mod renamer;

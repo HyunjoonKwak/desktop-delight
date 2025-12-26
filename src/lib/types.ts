@@ -190,6 +190,48 @@ export interface ExtensionMapping {
   targetFolder: string;
 }
 
+// Folder compare types
+export type FileStatus = 'only_in_source' | 'only_in_target' | 'identical' | 'different';
+
+export interface CompareResult {
+  relativePath: string;
+  status: FileStatus;
+  sourceFile?: FileInfo;
+  targetFile?: FileInfo;
+  sizeDiff: number;
+}
+
+export interface CompareSummary {
+  sourcePath: string;
+  targetPath: string;
+  totalFiles: number;
+  onlyInSource: number;
+  onlyInTarget: number;
+  identical: number;
+  different: number;
+  sourceTotalSize: number;
+  targetTotalSize: number;
+  results: CompareResult[];
+}
+
+export type MergeStrategy = 'skip_existing' | 'overwrite_all' | 'overwrite_newer' | 'overwrite_older' | 'rename';
+
+export interface MergeOptions {
+  strategy: MergeStrategy;
+  deleteSourceAfter: boolean;
+  includeOnlyInSource: boolean;
+  includeDifferent: boolean;
+}
+
+export interface MergeResult {
+  success: boolean;
+  filesCopied: number;
+  filesSkipped: number;
+  filesOverwritten: number;
+  bytesTransferred: number;
+  errors: string[];
+}
+
 // Category display info
 export const CATEGORY_INFO: Record<
   FileCategory,
