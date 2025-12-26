@@ -17,6 +17,7 @@ interface FileCardProps {
   date: string;
   selected?: boolean;
   onClick?: () => void;
+  onDoubleClick?: () => void;
 }
 
 const fileIcons = {
@@ -36,12 +37,14 @@ export default function FileCard({
   date,
   selected,
   onClick,
+  onDoubleClick,
 }: FileCardProps) {
   const { icon: Icon, colorClass, bgClass } = fileIcons[type];
 
   return (
     <motion.div
       onClick={onClick}
+      onDoubleClick={onDoubleClick}
       className={`group relative p-4 rounded-xl cursor-pointer transition-all duration-200 ${
         selected
           ? "bg-primary/10 border border-primary/50 shadow-glow"
