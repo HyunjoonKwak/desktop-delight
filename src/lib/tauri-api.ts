@@ -20,7 +20,8 @@ import type {
 
 // Check if running in Tauri environment
 export const isTauri = (): boolean => {
-  return typeof window !== 'undefined' && '__TAURI__' in window;
+  return typeof window !== 'undefined' &&
+    (('__TAURI__' in window) || ('__TAURI_INTERNALS__' in window));
 };
 
 // File operations API

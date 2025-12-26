@@ -89,23 +89,31 @@ export default function DesktopView() {
   // Load files on mount
   const loadFiles = useCallback(async () => {
     setIsLoading(true);
+    console.log("[DesktopView] isTauri:", isTauri());
     try {
       if (isTauri()) {
+        console.log("[DesktopView] Calling scanDesktop...");
         const desktopFiles = await fileApi.scanDesktop();
+        console.log("[DesktopView] Got files:", desktopFiles?.length);
         setFiles(desktopFiles.filter(f => !f.isDirectory));
       } else {
+        console.log("[DesktopView] Not in Tauri, using mock data");
         // Use mock data for development
         setFiles(mockDesktopFiles);
       }
     } catch (error) {
-      console.error("Failed to load files:", error);
+      console.error("[DesktopView] Failed to load files:", error);
       toast({
         title: "파일 로드 실패",
-        description: "바탕화면 파일을 불러오는데 실패했습니다.",
+        description: String(error),
         variant: "destructive",
       });
-      // Fallback to mock data
-      setFiles(mockDesktopFiles);
+      // Don't fallback to mock data in Tauri - show the error instead
+      if (!isTauri()) {
+        setFiles(mockDesktopFiles);
+      } else {
+        setFiles([]);
+      }
     } finally {
       setIsLoading(false);
     }
