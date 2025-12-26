@@ -9,6 +9,7 @@ import {
   FileType,
   ChevronRight,
   HardDrive,
+  Copy,
 } from "lucide-react";
 
 interface SidebarProps {
@@ -21,6 +22,7 @@ const menuItems = [
   { id: "folder-manager", label: "폴더 매니저", icon: FolderTree },
   { id: "batch-rename", label: "일괄 이름 변경", icon: FileText },
   { id: "extension-sort", label: "확장자 분류", icon: FileType },
+  { id: "duplicate-manager", label: "중복 파일 관리", icon: Copy },
 ];
 
 const drives = [

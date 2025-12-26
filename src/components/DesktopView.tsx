@@ -22,6 +22,9 @@ import {
   Package,
   File,
   Shield,
+  LayoutGrid,
+  List,
+  Folder,
 } from "lucide-react";
 import FileCard from "./FileCard";
 import HistoryPanel, { HistoryItem } from "./HistoryPanel";
@@ -32,8 +35,21 @@ import { useToast } from "@/hooks/use-toast";
 import { fileApi, historyApi, organizerApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
 import type { FileInfo, FileCategory } from "@/lib/types";
 
-type SortKey = "name" | "date" | "size";
+type SortKey = "name" | "date" | "size" | "category";
 type SortOrder = "asc" | "desc";
+type ViewMode = "grid" | "list";
+
+// Category icons map
+const categoryIcons: Record<string, typeof Image> = {
+  images: Image,
+  documents: FileText,
+  videos: Video,
+  music: Music,
+  archives: Archive,
+  installers: Archive,
+  code: Code,
+  others: File,
+};
 
 // Map FileCategory to legacy type for FileCard compatibility
 const categoryToType: Record<FileCategory, string> = {
@@ -79,6 +95,7 @@ export default function DesktopView() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("grid");
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isRulesModalOpen, setIsRulesModalOpen] = useState(false);
   const [isBackupOpen, setIsBackupOpen] = useState(false);
@@ -196,6 +213,9 @@ export default function DesktopView() {
         case "size":
           comparison = b.size - a.size;
           break;
+        case "category":
+          comparison = a.category.localeCompare(b.category);
+          break;
       }
       return sortOrder === "asc" ? comparison : -comparison;
     });
@@ -211,7 +231,7 @@ export default function DesktopView() {
       setSortOrder("asc");
     }
 
-    const sortLabels = { name: "이름", date: "날짜", size: "크기" };
+    const sortLabels = { name: "이름", date: "날짜", size: "크기", category: "종류" };
     addToHistory({
       type: "sort",
       description: `${sortLabels[key]}순 정렬`,
@@ -557,6 +577,43 @@ export default function DesktopView() {
               <span>크기</span>
               <SortIcon keyName="size" />
             </button>
+            <button
+              onClick={() => toggleSort("category")}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                sortKey === "category"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+            >
+              <span>종류</span>
+              <SortIcon keyName="category" />
+            </button>
+          </div>
+
+          {/* View Mode Toggle */}
+          <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
+            <button
+              onClick={() => setViewMode("grid")}
+              className={`p-1.5 rounded-lg transition-all ${
+                viewMode === "grid"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+              title="그리드 뷰"
+            >
+              <LayoutGrid className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              className={`p-1.5 rounded-lg transition-all ${
+                viewMode === "list"
+                  ? "bg-primary text-primary-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
+              }`}
+              title="리스트 뷰"
+            >
+              <List className="w-4 h-4" />
+            </button>
           </div>
 
           {/* Clear Filters */}
@@ -672,10 +729,10 @@ export default function DesktopView() {
                 </button>
               )}
             </motion.div>
-          ) : (
+          ) : viewMode === "grid" ? (
             <motion.div
               className="grid grid-cols-4 gap-4"
-              key="files"
+              key="files-grid"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
             >
@@ -691,6 +748,80 @@ export default function DesktopView() {
                   onDoubleClick={() => toggleSelect(file.path, true)}
                 />
               ))}
+            </motion.div>
+          ) : (
+            <motion.div
+              className="space-y-1"
+              key="files-list"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+            >
+              {/* List Header */}
+              <div className="flex items-center gap-4 px-4 py-2 text-xs font-medium text-muted-foreground border-b border-border">
+                <div className="w-6" /> {/* Checkbox space */}
+                <div className="w-10" /> {/* Icon space */}
+                <div className="flex-1">파일명</div>
+                <div className="w-24 text-right">크기</div>
+                <div className="w-32 text-right">수정일</div>
+                <div className="w-20 text-right">종류</div>
+              </div>
+              {filteredAndSortedFiles.map((file, index) => {
+                const IconComponent = categoryIcons[file.category] || File;
+                const categoryInfo = categories.find(c => c.id === file.category);
+                return (
+                  <motion.div
+                    key={file.path}
+                    className={`flex items-center gap-4 px-4 py-2.5 rounded-lg cursor-pointer transition-all ${
+                      selectedFiles.includes(file.path)
+                        ? "bg-primary/10 border border-primary/30"
+                        : "hover:bg-secondary border border-transparent"
+                    }`}
+                    onClick={() => toggleSelect(file.path)}
+                    onDoubleClick={() => toggleSelect(file.path, true)}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ delay: index * 0.02 }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedFiles.includes(file.path)}
+                      onChange={() => toggleSelect(file.path)}
+                      className="w-4 h-4 rounded border-muted-foreground"
+                      onClick={(e) => e.stopPropagation()}
+                    />
+                    <div
+                      className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                      style={{ backgroundColor: `${categoryInfo?.color || 'hsl(0, 0%, 50%)'}20` }}
+                    >
+                      <IconComponent
+                        className="w-5 h-5"
+                        style={{ color: categoryInfo?.color || 'hsl(0, 0%, 50%)' }}
+                      />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">{file.name}</p>
+                      <p className="text-xs text-muted-foreground">{file.extension}</p>
+                    </div>
+                    <div className="w-24 text-right text-sm text-muted-foreground">
+                      {file.sizeFormatted}
+                    </div>
+                    <div className="w-32 text-right text-sm text-muted-foreground">
+                      {formatRelativeDate(file.modifiedAt)}
+                    </div>
+                    <div className="w-20 text-right">
+                      <span
+                        className="px-2 py-0.5 rounded text-xs font-medium"
+                        style={{
+                          backgroundColor: `${categoryInfo?.color || 'hsl(0, 0%, 50%)'}15`,
+                          color: categoryInfo?.color || 'hsl(0, 0%, 50%)'
+                        }}
+                      >
+                        {categoryInfo?.label || '기타'}
+                      </span>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </motion.div>
           )}
         </AnimatePresence>

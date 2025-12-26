@@ -4,6 +4,7 @@ import DesktopView from "@/components/DesktopView";
 import FolderManager from "@/components/FolderManager";
 import BatchRename from "@/components/BatchRename";
 import ExtensionSort from "@/components/ExtensionSort";
+import DuplicateManager from "@/components/DuplicateManager";
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("desktop");
@@ -18,6 +19,8 @@ const Index = () => {
         return <BatchRename />;
       case "extension-sort":
         return <ExtensionSort />;
+      case "duplicate-manager":
+        return <DuplicateManager />;
       default:
         return <DesktopView />;
     }
