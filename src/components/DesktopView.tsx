@@ -9,15 +9,17 @@ import {
   Video,
   Music,
   Archive,
-  Play,
   CheckCircle2,
   Search,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
   X,
+  History,
 } from "lucide-react";
 import FileCard from "./FileCard";
+import HistoryPanel, { HistoryItem } from "./HistoryPanel";
+import { useToast } from "@/hooks/use-toast";
 
 type FileType = "image" | "document" | "video" | "audio" | "archive" | "code";
 type SortKey = "name" | "date" | "size";
@@ -60,6 +62,18 @@ export default function DesktopView() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [activeTypeFilter, setActiveTypeFilter] = useState<string | null>(null);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const { toast } = useToast();
+
+  const addToHistory = (item: Omit<HistoryItem, "id" | "timestamp">) => {
+    const newItem: HistoryItem = {
+      ...item,
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      timestamp: new Date(),
+    };
+    setHistory((prev) => [newItem, ...prev]);
+  };
 
   const filteredAndSortedFiles = useMemo(() => {
     let files = [...mockDesktopFiles];
@@ -103,6 +117,14 @@ export default function DesktopView() {
       setSortKey(key);
       setSortOrder("asc");
     }
+
+    // Add to history
+    const sortLabels = { name: "이름", date: "날짜", size: "크기" };
+    addToHistory({
+      type: "sort",
+      description: `${sortLabels[key]}순 정렬`,
+      details: `파일을 ${sortLabels[key]} 기준으로 정렬했습니다`,
+    });
   };
 
   const SortIcon = ({ keyName }: { keyName: SortKey }) => {
@@ -125,7 +147,42 @@ export default function DesktopView() {
     setTimeout(() => {
       setIsOrganizing(false);
       setOrganized(true);
+      addToHistory({
+        type: "organize",
+        description: "바탕화면 자동 정리",
+        details: `${mockDesktopFiles.length}개 파일을 유형별로 분류했습니다`,
+      });
+      toast({
+        title: "정리 완료",
+        description: "바탕화면 파일이 유형별로 정리되었습니다.",
+      });
     }, 2000);
+  };
+
+  const handleUndo = (id: string) => {
+    setHistory((prev) =>
+      prev.map((item) =>
+        item.id === id ? { ...item, undone: true } : item
+      )
+    );
+
+    const item = history.find((h) => h.id === id);
+    if (item?.type === "organize") {
+      setOrganized(false);
+    }
+
+    toast({
+      title: "되돌리기 완료",
+      description: "작업이 취소되었습니다.",
+    });
+  };
+
+  const handleClearHistory = () => {
+    setHistory([]);
+    toast({
+      title: "히스토리 삭제",
+      description: "모든 작업 기록이 삭제되었습니다.",
+    });
   };
 
   const clearFilters = () => {
@@ -153,39 +210,58 @@ export default function DesktopView() {
           </div>
         </div>
 
-        <motion.button
-          onClick={handleOrganize}
-          disabled={isOrganizing || organized}
-          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all ${
-            organized
-              ? "bg-accent/20 text-accent"
-              : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
-          }`}
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-        >
-          {isOrganizing ? (
-            <>
-              <motion.div
-                animate={{ rotate: 360 }}
-                transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-              >
+        <div className="flex items-center gap-3">
+          {/* History Button */}
+          <motion.button
+            onClick={() => setIsHistoryOpen(true)}
+            className="relative flex items-center gap-2 px-4 py-2.5 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            <History className="w-5 h-5" />
+            <span>히스토리</span>
+            {history.filter((h) => !h.undone).length > 0 && (
+              <span className="absolute -top-1 -right-1 w-5 h-5 rounded-full gradient-primary text-[10px] font-bold text-primary-foreground flex items-center justify-center">
+                {history.filter((h) => !h.undone).length}
+              </span>
+            )}
+          </motion.button>
+
+          {/* Organize Button */}
+          <motion.button
+            onClick={handleOrganize}
+            disabled={isOrganizing || organized}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-medium transition-all ${
+              organized
+                ? "bg-accent/20 text-accent"
+                : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
+            }`}
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+          >
+            {isOrganizing ? (
+              <>
+                <motion.div
+                  animate={{ rotate: 360 }}
+                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                >
+                  <Sparkles className="w-5 h-5" />
+                </motion.div>
+                <span>정리 중...</span>
+              </>
+            ) : organized ? (
+              <>
+                <CheckCircle2 className="w-5 h-5" />
+                <span>정리 완료!</span>
+              </>
+            ) : (
+              <>
                 <Sparkles className="w-5 h-5" />
-              </motion.div>
-              <span>정리 중...</span>
-            </>
-          ) : organized ? (
-            <>
-              <CheckCircle2 className="w-5 h-5" />
-              <span>정리 완료!</span>
-            </>
-          ) : (
-            <>
-              <Sparkles className="w-5 h-5" />
-              <span>자동 정리</span>
-            </>
-          )}
-        </motion.button>
+                <span>자동 정리</span>
+              </>
+            )}
+          </motion.button>
+        </div>
       </div>
 
       {/* Categories Overview - Clickable Filter */}
@@ -397,6 +473,15 @@ export default function DesktopView() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* History Panel */}
+      <HistoryPanel
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        history={history}
+        onUndo={handleUndo}
+        onClearHistory={handleClearHistory}
+      />
     </div>
   );
 }
