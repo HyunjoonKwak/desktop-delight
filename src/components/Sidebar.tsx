@@ -6,7 +6,6 @@ import {
   FileText,
   Settings,
   FolderTree,
-  FileType,
   ChevronRight,
   HardDrive,
   Copy,
@@ -24,7 +23,6 @@ const menuItems = [
   { id: "desktop", label: "바탕화면 정리", icon: MonitorUp },
   { id: "folder-manager", label: "폴더 매니저", icon: FolderTree },
   { id: "batch-rename", label: "일괄 이름 변경", icon: FileText },
-  { id: "extension-sort", label: "확장자 분류", icon: FileType },
   { id: "duplicate-manager", label: "중복 파일 관리", icon: Copy },
   { id: "folder-compare", label: "폴더 비교 & 머지", icon: GitCompare },
 ];

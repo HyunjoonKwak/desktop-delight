@@ -96,6 +96,7 @@ pub fn run() {
             commands::scanner::get_home_path,
             commands::scanner::get_common_paths,
             commands::scanner::get_drives,
+            commands::scanner::fast_list_directory,
             // File operations
             commands::file_ops::move_file,
             commands::file_ops::copy_file,

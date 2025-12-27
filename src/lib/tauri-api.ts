@@ -75,6 +75,12 @@ export const fileApi = {
     return invoke<DriveInfo[]>('get_drives');
   },
 
+  // Fast directory listing - only immediate children, no deep scan
+  fastListDirectory: async (path: string): Promise<FileInfo[]> => {
+    if (!isTauri()) return [];
+    return invoke<FileInfo[]>('fast_list_directory', { path });
+  },
+
   moveFile: async (
     source: string,
     dest: string,

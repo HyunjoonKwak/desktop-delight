@@ -1,171 +1,443 @@
-import { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   FileText,
   ArrowRight,
   Play,
   RefreshCw,
   Hash,
-  Calendar,
   Type,
   CheckCircle2,
   AlertCircle,
   FolderOpen,
   Loader2,
   Folder,
-  Plus,
+  ChevronRight,
+  ChevronUp,
+  ArrowLeft,
+  Home,
+  Monitor,
+  Download,
+  HardDrive,
+  Check,
+  X,
+  Replace,
+  Scissors,
+  Calendar,
+  Eye,
 } from "lucide-react";
-import { fileApi, renamerApi, dialogApi, isTauri } from "@/lib/tauri-api";
-import type { FileInfo, RenameRule, RenamePreview } from "@/lib/types";
+import { fileApi, renamerApi, isTauri } from "@/lib/tauri-api";
+import type { FileInfo, RenameRule, RenamePreview, DriveInfo } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
-const renameRuleTemplates = [
-  { id: "prefix", label: "접두사 추가", icon: Type, example: "photo_" },
-  { id: "suffix", label: "접미사 추가", icon: Type, example: "_edited" },
-  { id: "serial_number", label: "일련번호", icon: Hash, example: "001, 002, 003..." },
-  { id: "date", label: "날짜 형식", icon: Calendar, example: "2024-01-15" },
+interface QuickAccessFolder {
+  name: string;
+  path: string;
+}
+
+const quickAccessIcons: Record<string, typeof Home> = {
+  "홈": Home,
+  "바탕화면": Monitor,
+  "문서": FileText,
+  "다운로드": Download,
+};
+
+// Rename mode definitions
+type RenameMode = "pattern" | "replace" | "remove" | "date";
+
+interface RenameModeInfo {
+  id: RenameMode;
+  name: string;
+  icon: typeof Type;
+  description: string;
+}
+
+const renameModes: RenameModeInfo[] = [
+  { id: "pattern", name: "패턴", icon: Type, description: "접두사 + 번호 + 접미사" },
+  { id: "replace", name: "찾아 바꾸기", icon: Replace, description: "특정 텍스트를 다른 텍스트로" },
+  { id: "remove", name: "텍스트 제거", icon: Scissors, description: "원하지 않는 텍스트 삭제" },
+  { id: "date", name: "날짜 추가", icon: Calendar, description: "파일명에 날짜 추가" },
 ];
 
 export default function BatchRename() {
-  const [files, setFiles] = useState<FileInfo[]>([]);
-  const [selectedFiles, setSelectedFiles] = useState<string[]>([]);
-  const [previews, setPreviews] = useState<RenamePreview[]>([]);
-  const [prefix, setPrefix] = useState("파일_");
+  // File browser state
+  const [currentPath, setCurrentPath] = useState<string>("");
+  const [folderContents, setFolderContents] = useState<FileInfo[]>([]);
+  const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
+  const [quickAccessFolders, setQuickAccessFolders] = useState<QuickAccessFolder[]>([]);
+  const [drives, setDrives] = useState<DriveInfo[]>([]);
+  const [isLoadingFolder, setIsLoadingFolder] = useState(false);
+
+  // Selection state
+  const [selectedFiles, setSelectedFiles] = useState<Set<string>>(new Set());
+
+  // Rename mode
+  const [renameMode, setRenameMode] = useState<RenameMode>("pattern");
+
+  // Pattern mode settings
+  const [prefix, setPrefix] = useState("");
   const [suffix, setSuffix] = useState("");
   const [useNumber, setUseNumber] = useState(true);
   const [startNumber, setStartNumber] = useState(1);
-  const [isLoading, setIsLoading] = useState(false);
+  const [numberPosition, setNumberPosition] = useState<"before" | "after">("before");
+  const [separator, setSeparator] = useState<"" | "_" | "-">("_");
+  const [keepOriginalName, setKeepOriginalName] = useState(true);
+
+  // Replace mode settings
+  const [findText, setFindText] = useState("");
+  const [replaceText, setReplaceText] = useState("");
+
+  // Remove mode settings
+  const [removeText, setRemoveText] = useState("");
+
+  // Date mode settings
+  const [dateFormat, setDateFormat] = useState("YYYYMMDD");
+  const [datePosition, setDatePosition] = useState<"prefix" | "suffix">("prefix");
+
+  // Rename state
+  const [previews, setPreviews] = useState<RenamePreview[]>([]);
   const [isRenaming, setIsRenaming] = useState(false);
   const [renamed, setRenamed] = useState(false);
-  const [currentPath, setCurrentPath] = useState<string>("");
+
   const { toast } = useToast();
 
-  // Load files from a specific path
-  const loadFiles = useCallback(async (path?: string) => {
-    setIsLoading(true);
+  // Load drives and quick access
+  useEffect(() => {
+    const init = async () => {
+      if (isTauri()) {
+        try {
+          const [driveList, paths, desktopPath] = await Promise.all([
+            fileApi.getDrives(),
+            fileApi.getCommonPaths(),
+            fileApi.getDesktopPath(),
+          ]);
+          setDrives(driveList);
+          setQuickAccessFolders(paths.map(([name, path]) => ({ name, path })));
+          await navigateTo(desktopPath, false);
+        } catch (error) {
+          console.error("Failed to initialize:", error);
+        }
+      }
+    };
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Navigate to folder
+  const navigateTo = useCallback(async (path: string, addToHistory: boolean = true) => {
+    setIsLoadingFolder(true);
     try {
       if (isTauri()) {
-        let filesResult: FileInfo[];
-        if (path) {
-          filesResult = await fileApi.scanDirectory(path, false, false);
-          setCurrentPath(path);
-        } else {
-          filesResult = await fileApi.scanDesktop();
-          const desktopPath = await fileApi.getDesktopPath();
-          setCurrentPath(desktopPath);
+        if (addToHistory && currentPath && currentPath !== path) {
+          setNavigationHistory(prev => [...prev, currentPath]);
         }
-        const fileOnly = filesResult.filter(f => !f.isDirectory);
-        setFiles(fileOnly);
-        // Auto-select first 5 files
-        setSelectedFiles(fileOnly.slice(0, 5).map(f => f.path));
+        const files = await fileApi.fastListDirectory(path);
+        setFolderContents(files);
+        setCurrentPath(path);
+        setSelectedFiles(new Set());
+        setRenamed(false);
       }
     } catch (error) {
-      console.error("Failed to load files:", error);
-      toast({
-        title: "파일 로드 실패",
-        description: String(error),
-        variant: "destructive",
-      });
+      console.error("Failed to navigate:", error);
+      const errorMsg = String(error);
+      if (errorMsg.includes("Operation not permitted") || errorMsg.includes("Permission denied")) {
+        toast({
+          title: "접근 권한 없음",
+          description: "이 폴더에 접근할 수 없습니다.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "폴더 열기 실패",
+          description: errorMsg,
+          variant: "destructive",
+        });
+      }
     } finally {
-      setIsLoading(false);
+      setIsLoadingFolder(false);
     }
-  }, [toast]);
+  }, [currentPath, toast]);
 
-  // Open folder picker
-  const handleSelectFolder = async () => {
-    try {
-      const selectedPath = await dialogApi.pickFolder("파일 이름을 변경할 폴더 선택");
-      if (selectedPath) {
-        await loadFiles(selectedPath);
+  // Go back
+  const goBack = useCallback(() => {
+    if (navigationHistory.length > 0) {
+      const previousPath = navigationHistory[navigationHistory.length - 1];
+      setNavigationHistory(prev => prev.slice(0, -1));
+      navigateTo(previousPath, false);
+    }
+  }, [navigationHistory, navigateTo]);
+
+  // Go to parent
+  const goToParent = useCallback(() => {
+    if (currentPath && currentPath !== '/') {
+      const parts = currentPath.split('/').filter(Boolean);
+      if (parts.length > 1) {
+        navigateTo('/' + parts.slice(0, -1).join('/'));
+      } else {
+        navigateTo('/');
       }
-    } catch (error) {
-      console.error("Failed to pick folder:", error);
-      toast({
-        title: "폴더 선택 실패",
-        description: String(error),
-        variant: "destructive",
-      });
+    }
+  }, [currentPath, navigateTo]);
+
+  // Toggle file selection
+  const toggleFile = (path: string) => {
+    setSelectedFiles(prev => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+    setRenamed(false);
+  };
+
+  // Select all files
+  const selectAllFiles = () => {
+    const allFiles = folderContents.filter(f => !f.isDirectory).map(f => f.path);
+    setSelectedFiles(new Set(allFiles));
+    setRenamed(false);
+  };
+
+  // Clear selection
+  const clearSelection = () => {
+    setSelectedFiles(new Set());
+    setRenamed(false);
+  };
+
+  // Get files and folders
+  const folders = folderContents.filter(f => f.isDirectory);
+  const files = folderContents.filter(f => !f.isDirectory);
+  const selectedFilesArray = Array.from(selectedFiles);
+
+  // Get sample file name for preview pattern
+  const sampleFileName = useMemo(() => {
+    if (selectedFilesArray.length > 0) {
+      const path = selectedFilesArray[0];
+      return path.split('/').pop() || "example.txt";
+    }
+    return "사진_001.jpg";
+  }, [selectedFilesArray]);
+
+  // Get current date formatted
+  const getFormattedDate = () => {
+    const now = new Date();
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+
+    switch (dateFormat) {
+      case "YYYYMMDD": return `${yyyy}${mm}${dd}`;
+      case "YYYY-MM-DD": return `${yyyy}-${mm}-${dd}`;
+      case "YYYY_MM_DD": return `${yyyy}_${mm}_${dd}`;
+      case "MMDD": return `${mm}${dd}`;
+      default: return `${yyyy}${mm}${dd}`;
     }
   };
 
-  useEffect(() => {
-    loadFiles();
-  }, [loadFiles]);
+  // Generate pattern example
+  const patternExample = useMemo(() => {
+    const namePart = sampleFileName.includes('.')
+      ? sampleFileName.substring(0, sampleFileName.lastIndexOf('.'))
+      : sampleFileName;
+    const ext = sampleFileName.includes('.')
+      ? sampleFileName.substring(sampleFileName.lastIndexOf('.'))
+      : '';
 
-  // Build rename rules based on settings
+    switch (renameMode) {
+      case "pattern": {
+        const parts: { text: string; type: 'prefix' | 'number' | 'name' | 'suffix' | 'ext' | 'sep' }[] = [];
+        if (prefix) parts.push({ text: prefix, type: 'prefix' });
+
+        // Number before name
+        if (useNumber && numberPosition === "before") {
+          if (parts.length > 0 && separator) parts.push({ text: separator, type: 'sep' });
+          parts.push({ text: '001', type: 'number' });
+        }
+
+        // Original name
+        if (keepOriginalName) {
+          if (parts.length > 0 && separator) parts.push({ text: separator, type: 'sep' });
+          parts.push({ text: namePart, type: 'name' });
+        }
+
+        // Number after name
+        if (useNumber && numberPosition === "after") {
+          if (parts.length > 0 && separator) parts.push({ text: separator, type: 'sep' });
+          parts.push({ text: '001', type: 'number' });
+        }
+
+        if (suffix) {
+          if (parts.length > 0 && separator) parts.push({ text: separator, type: 'sep' });
+          parts.push({ text: suffix, type: 'suffix' });
+        }
+        parts.push({ text: ext, type: 'ext' });
+        return parts;
+      }
+      case "replace": {
+        if (!findText) return [{ text: sampleFileName, type: 'name' as const }];
+        const newName = sampleFileName.replace(new RegExp(findText, 'g'), replaceText);
+        return [{ text: newName, type: 'name' as const }];
+      }
+      case "remove": {
+        if (!removeText) return [{ text: sampleFileName, type: 'name' as const }];
+        const newName = sampleFileName.replace(new RegExp(removeText, 'g'), '');
+        return [{ text: newName, type: 'name' as const }];
+      }
+      case "date": {
+        const dateStr = getFormattedDate();
+        if (datePosition === "prefix") {
+          return [
+            { text: dateStr + "_", type: 'prefix' as const },
+            { text: sampleFileName, type: 'name' as const }
+          ];
+        } else {
+          return [
+            { text: namePart, type: 'name' as const },
+            { text: "_" + dateStr, type: 'suffix' as const },
+            { text: ext, type: 'ext' as const }
+          ];
+        }
+      }
+      default:
+        return [{ text: sampleFileName, type: 'name' as const }];
+    }
+  }, [renameMode, prefix, suffix, useNumber, numberPosition, separator, keepOriginalName, findText, replaceText, removeText, dateFormat, datePosition, sampleFileName]);
+
+  // Build rename rules
   const buildRules = useCallback((): RenameRule[] => {
     const rules: RenameRule[] = [];
 
-    if (prefix) {
-      rules.push({
-        ruleType: "prefix",
-        value: prefix,
-      });
-    }
-
-    if (useNumber) {
-      rules.push({
-        ruleType: "serial_number",
-        value: String(startNumber),
-        startNumber,
-        padding: 3,
-      });
-    }
-
-    if (suffix) {
-      rules.push({
-        ruleType: "suffix",
-        value: suffix,
-      });
+    switch (renameMode) {
+      case "pattern":
+        if (prefix) {
+          rules.push({ ruleType: "prefix", value: prefix });
+        }
+        if (useNumber) {
+          rules.push({ ruleType: "serial_number", value: String(startNumber), startNumber, padding: 3 });
+        }
+        if (keepOriginalName) {
+          rules.push({ ruleType: "keep_original", value: "" });
+        }
+        if (suffix) {
+          rules.push({ ruleType: "suffix", value: suffix });
+        }
+        break;
+      case "replace":
+        if (findText) {
+          rules.push({ ruleType: "replace", value: findText, replaceWith: replaceText });
+        }
+        break;
+      case "remove":
+        if (removeText) {
+          rules.push({ ruleType: "remove", value: removeText });
+        }
+        break;
+      case "date":
+        rules.push({
+          ruleType: "date",
+          value: dateFormat,
+          position: datePosition
+        });
+        break;
     }
 
     return rules;
-  }, [prefix, suffix, useNumber, startNumber]);
+  }, [renameMode, prefix, suffix, useNumber, startNumber, keepOriginalName, findText, replaceText, removeText, dateFormat, datePosition]);
 
-  // Update preview when settings change
-  const updatePreview = useCallback(async () => {
-    if (selectedFiles.length === 0) {
+  // Update preview - local simulation for better UX
+  const updatePreviewLocal = useCallback(() => {
+    if (selectedFilesArray.length === 0) {
       setPreviews([]);
       return;
     }
 
-    try {
-      if (isTauri()) {
-        const rules = buildRules();
-        const previewResult = await renamerApi.previewRename(selectedFiles, rules);
-        setPreviews(previewResult);
-      } else {
-        // Mock preview for development
-        setPreviews(selectedFiles.map((path, index) => {
-          const name = path.split('/').pop() || path;
-          const ext = name.includes('.') ? '.' + name.split('.').pop() : '';
-          const num = useNumber ? String(startNumber + index).padStart(3, "0") : "";
-          return {
-            originalPath: path,
-            originalName: name,
-            newName: `${prefix}${num}${suffix}${ext}`,
-            newPath: path.replace(name, `${prefix}${num}${suffix}${ext}`),
-          };
-        }));
+    const newPreviews: RenamePreview[] = selectedFilesArray.map((path, index) => {
+      const fullName = path.split('/').pop() || path;
+      const name = fullName.includes('.')
+        ? fullName.substring(0, fullName.lastIndexOf('.'))
+        : fullName;
+      const ext = fullName.includes('.')
+        ? fullName.substring(fullName.lastIndexOf('.'))
+        : '';
+
+      let newName = "";
+
+      switch (renameMode) {
+        case "pattern": {
+          const parts: string[] = [];
+          if (prefix) parts.push(prefix);
+
+          // Number before name
+          if (useNumber && numberPosition === "before") {
+            parts.push(String(startNumber + index).padStart(3, "0"));
+          }
+
+          // Original name
+          if (keepOriginalName) {
+            parts.push(name);
+          }
+
+          // Number after name
+          if (useNumber && numberPosition === "after") {
+            parts.push(String(startNumber + index).padStart(3, "0"));
+          }
+
+          if (suffix) parts.push(suffix);
+          newName = parts.join(separator) + ext;
+          break;
+        }
+        case "replace": {
+          if (findText) {
+            newName = fullName.replace(new RegExp(findText, 'g'), replaceText);
+          } else {
+            newName = fullName;
+          }
+          break;
+        }
+        case "remove": {
+          if (removeText) {
+            newName = fullName.replace(new RegExp(removeText, 'g'), '');
+          } else {
+            newName = fullName;
+          }
+          break;
+        }
+        case "date": {
+          const dateStr = getFormattedDate();
+          if (datePosition === "prefix") {
+            newName = dateStr + "_" + fullName;
+          } else {
+            newName = name + "_" + dateStr + ext;
+          }
+          break;
+        }
       }
-    } catch (error) {
-      console.error("Failed to preview rename:", error);
-    }
-  }, [selectedFiles, buildRules, prefix, suffix, useNumber, startNumber]);
+
+      return {
+        originalPath: path,
+        originalName: fullName,
+        newName: newName || fullName,
+        newPath: path.replace(fullName, newName || fullName),
+      };
+    });
+
+    setPreviews(newPreviews);
+  }, [selectedFilesArray, renameMode, prefix, suffix, useNumber, startNumber, numberPosition, separator, keepOriginalName, findText, replaceText, removeText, dateFormat, datePosition]);
 
   useEffect(() => {
-    updatePreview();
-  }, [updatePreview]);
+    updatePreviewLocal();
+  }, [updatePreviewLocal]);
 
+  // Execute rename
   const handleRename = async () => {
-    if (selectedFiles.length === 0) return;
-
+    if (selectedFilesArray.length === 0) return;
     setIsRenaming(true);
     try {
       if (isTauri()) {
         const rules = buildRules();
-        const result = await renamerApi.executeRename(selectedFiles, rules);
-
+        const result = await renamerApi.executeRename(selectedFilesArray, rules);
         if (result.success) {
           setRenamed(true);
           toast({
@@ -179,14 +451,6 @@ export default function BatchRename() {
             variant: "destructive",
           });
         }
-      } else {
-        // Mock for development
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        setRenamed(true);
-        toast({
-          title: "이름 변경 완료 (시뮬레이션)",
-          description: `${selectedFiles.length}개 파일의 이름이 변경되었습니다.`,
-        });
       }
     } catch (error) {
       console.error("Rename failed:", error);
@@ -200,28 +464,56 @@ export default function BatchRename() {
     }
   };
 
+  // Reset
   const handleReset = () => {
     setRenamed(false);
-    setPrefix("파일_");
+    setPrefix("");
     setSuffix("");
     setUseNumber(true);
     setStartNumber(1);
-    loadFiles();
+    setNumberPosition("before");
+    setSeparator("_");
+    setKeepOriginalName(true);
+    setFindText("");
+    setReplaceText("");
+    setRemoveText("");
+    setDateFormat("YYYYMMDD");
+    setDatePosition("prefix");
+    setSelectedFiles(new Set());
+    navigateTo(currentPath, false);
   };
 
-  const toggleFileSelection = (path: string) => {
-    setSelectedFiles(prev =>
-      prev.includes(path)
-        ? prev.filter(p => p !== path)
-        : [...prev, path]
-    );
-    setRenamed(false);
+  const currentFolderName = currentPath.split('/').pop() || currentPath || "폴더";
+
+  // Color coding for preview parts
+  const getPartColor = (type: string) => {
+    switch (type) {
+      case 'prefix': return 'text-blue-400';
+      case 'number': return 'text-amber-400';
+      case 'name': return 'text-foreground';
+      case 'suffix': return 'text-green-400';
+      case 'ext': return 'text-muted-foreground';
+      case 'sep': return 'text-muted-foreground';
+      default: return 'text-foreground';
+    }
+  };
+
+  const getPartBg = (type: string) => {
+    switch (type) {
+      case 'prefix': return 'bg-blue-500/10';
+      case 'number': return 'bg-amber-500/10';
+      case 'name': return 'bg-secondary/50';
+      case 'suffix': return 'bg-green-500/10';
+      case 'ext': return 'bg-muted/30';
+      case 'sep': return '';
+      default: return '';
+    }
   };
 
   return (
     <div className="flex-1 p-6 overflow-auto">
       {/* Header */}
-      <div className="flex items-center gap-4 mb-8">
+      <div className="flex items-center gap-4 mb-6">
         <div className="w-12 h-12 rounded-2xl bg-[hsl(270,70%,55%)]/20 flex items-center justify-center">
           <FileText className="w-6 h-6 text-[hsl(270,70%,55%)]" />
         </div>
@@ -234,270 +526,600 @@ export default function BatchRename() {
       </div>
 
       <div className="grid grid-cols-2 gap-6">
-        {/* Settings */}
-        <div className="glass rounded-2xl p-6 border border-border">
-          <h2 className="text-lg font-medium text-foreground mb-6">이름 변경 규칙</h2>
-
-          {/* Prefix */}
-          <div className="mb-6">
-            <label className="text-sm font-medium text-muted-foreground mb-2 block">
-              접두사 (Prefix)
-            </label>
-            <input
-              type="text"
-              value={prefix}
-              onChange={(e) => {
-                setPrefix(e.target.value);
-                setRenamed(false);
-              }}
-              placeholder="예: 여행사진_"
-              className="w-full px-4 py-3 bg-secondary rounded-xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-          </div>
-
-          {/* Suffix */}
-          <div className="mb-6">
-            <label className="text-sm font-medium text-muted-foreground mb-2 block">
-              접미사 (Suffix)
-            </label>
-            <input
-              type="text"
-              value={suffix}
-              onChange={(e) => {
-                setSuffix(e.target.value);
-                setRenamed(false);
-              }}
-              placeholder="예: _final"
-              className="w-full px-4 py-3 bg-secondary rounded-xl text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-          </div>
-
-          {/* Numbering */}
-          <div className="mb-6">
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-sm font-medium text-muted-foreground">
-                일련번호 추가
-              </label>
-              <button
-                onClick={() => {
-                  setUseNumber(!useNumber);
-                  setRenamed(false);
-                }}
-                className={`w-12 h-6 rounded-full transition-colors ${
-                  useNumber ? "bg-primary" : "bg-muted"
+        {/* Left: File Browser */}
+        <div className="glass rounded-2xl p-4 border border-border">
+          {/* Quick Access */}
+          <div className="flex flex-wrap items-center gap-2 mb-4 pb-4 border-b border-border">
+            {quickAccessFolders.slice(0, 4).map((folder) => {
+              const IconComponent = quickAccessIcons[folder.name] || Folder;
+              const isActive = currentPath === folder.path;
+              return (
+                <motion.button
+                  key={folder.path}
+                  onClick={() => navigateTo(folder.path)}
+                  className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                    isActive
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                  }`}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                >
+                  <IconComponent className="w-3.5 h-3.5" />
+                  <span>{folder.name}</span>
+                </motion.button>
+              );
+            })}
+            <div className="w-px h-5 bg-border mx-1" />
+            {drives.map((drive) => (
+              <motion.button
+                key={drive.path}
+                onClick={() => navigateTo(drive.path)}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
+                  currentPath.startsWith(drive.path)
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
                 }`}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
               >
-                <motion.div
-                  className="w-5 h-5 bg-foreground rounded-full"
-                  animate={{ x: useNumber ? 26 : 2 }}
-                />
-              </button>
-            </div>
-            {useNumber && (
-              <motion.div
-                initial={{ opacity: 0, height: 0 }}
-                animate={{ opacity: 1, height: "auto" }}
-              >
-                <label className="text-xs text-muted-foreground mb-2 block">
-                  시작 번호
-                </label>
-                <input
-                  type="number"
-                  value={startNumber}
-                  onChange={(e) => {
-                    setStartNumber(Number(e.target.value));
-                    setRenamed(false);
-                  }}
-                  min={1}
-                  className="w-32 px-4 py-2 bg-secondary rounded-xl text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-              </motion.div>
-            )}
+                <HardDrive className="w-3.5 h-3.5" />
+                <span>{drive.name}</span>
+              </motion.button>
+            ))}
           </div>
 
-          {/* File Selection */}
-          <div>
-            <div className="flex items-center justify-between mb-3">
-              <label className="text-sm font-medium text-muted-foreground">
-                파일 선택 ({selectedFiles.length}/{files.length})
-              </label>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={handleSelectFolder}
-                  disabled={isLoading}
-                  className="text-xs text-primary hover:underline flex items-center gap-1"
-                >
-                  <Folder className="w-3 h-3" />
-                  폴더 선택
-                </button>
-                <button
-                  onClick={() => loadFiles(currentPath)}
-                  disabled={isLoading}
-                  className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
-                >
-                  <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
-                  새로고침
-                </button>
-              </div>
+          {/* Navigation */}
+          <div className="flex items-center gap-2 mb-4">
+            <motion.button
+              onClick={goBack}
+              disabled={navigationHistory.length === 0}
+              className="p-1.5 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-30"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </motion.button>
+            <motion.button
+              onClick={goToParent}
+              disabled={!currentPath || currentPath === '/'}
+              className="p-1.5 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-30"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <ChevronUp className="w-4 h-4" />
+            </motion.button>
+
+            {/* Breadcrumb */}
+            <div className="flex-1 flex items-center gap-1 px-2 py-1 rounded-lg bg-secondary/30 text-xs overflow-x-auto">
+              <button onClick={() => navigateTo('/')} className="text-muted-foreground hover:text-foreground">
+                /
+              </button>
+              {currentPath.split('/').filter(Boolean).map((part, index, arr) => {
+                const pathUpToHere = '/' + arr.slice(0, index + 1).join('/');
+                const isLast = index === arr.length - 1;
+                return (
+                  <span key={pathUpToHere} className="flex items-center gap-1">
+                    <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                    <button
+                      onClick={() => !isLast && navigateTo(pathUpToHere)}
+                      className={isLast ? 'text-foreground font-medium' : 'text-muted-foreground hover:text-foreground'}
+                      disabled={isLast}
+                    >
+                      {part}
+                    </button>
+                  </span>
+                );
+              })}
             </div>
 
-            {/* Current Path */}
-            {currentPath && (
-              <div className="mb-2 px-3 py-2 bg-secondary/30 rounded-lg">
-                <p className="text-xs text-muted-foreground truncate" title={currentPath}>
-                  📁 {currentPath.split('/').slice(-2).join('/')}
-                </p>
-              </div>
-            )}
+            <motion.button
+              onClick={() => navigateTo(currentPath, false)}
+              disabled={isLoadingFolder}
+              className="p-1.5 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors"
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoadingFolder ? 'animate-spin' : ''}`} />
+            </motion.button>
+          </div>
 
-            <div className="max-h-[200px] overflow-auto space-y-1 bg-secondary/50 rounded-xl p-2">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-4">
-                  <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : files.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-6 text-muted-foreground">
-                  <FolderOpen className="w-8 h-8 mb-2 opacity-50" />
-                  <p className="text-xs text-center mb-2">
-                    {isTauri() ? "폴더에 파일이 없습니다" : "Tauri 환경에서만 사용 가능합니다"}
-                  </p>
-                  {isTauri() && (
-                    <motion.button
-                      onClick={handleSelectFolder}
-                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-lg hover:opacity-90"
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
-                    >
-                      <Plus className="w-3 h-3" />
-                      폴더 선택하기
-                    </motion.button>
-                  )}
-                </div>
-              ) : (
+          {/* Selection Controls */}
+          <div className="flex items-center justify-between mb-3 px-1">
+            <div className="flex items-center gap-3">
+              <span className="text-sm text-muted-foreground">
+                <FolderOpen className="w-4 h-4 inline mr-1" />
+                {currentFolderName}
+              </span>
+              <span className="text-xs text-muted-foreground">
+                {folders.length}개 폴더, {files.length}개 파일
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {files.length > 0 && (
                 <>
-                  <div className="flex items-center gap-2 mb-2 pb-2 border-b border-border/50">
+                  <button
+                    onClick={selectAllFiles}
+                    className="text-xs text-primary hover:underline flex items-center gap-1"
+                  >
+                    <Check className="w-3 h-3" />
+                    전체 선택
+                  </button>
+                  {selectedFiles.size > 0 && (
                     <button
-                      onClick={() => setSelectedFiles(files.map(f => f.path))}
-                      className="text-xs text-primary hover:underline"
+                      onClick={clearSelection}
+                      className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
                     >
-                      전체 선택
+                      <X className="w-3 h-3" />
+                      해제
                     </button>
-                    <span className="text-muted-foreground">|</span>
-                    <button
-                      onClick={() => setSelectedFiles([])}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                    >
-                      선택 해제
-                    </button>
-                  </div>
-                  {files.map((file) => (
-                    <label
-                      key={file.path}
-                      className="flex items-center gap-2 p-2 rounded-lg hover:bg-secondary cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedFiles.includes(file.path)}
-                        onChange={() => toggleFileSelection(file.path)}
-                        className="rounded border-muted-foreground"
-                      />
-                      <span className="text-xs text-foreground truncate">{file.name}</span>
-                    </label>
-                  ))}
+                  )}
                 </>
               )}
             </div>
           </div>
-        </div>
 
-        {/* Preview */}
-        <div className="glass rounded-2xl p-6 border border-border">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-lg font-medium text-foreground">미리보기</h2>
-            <button
-              onClick={handleReset}
-              className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground"
-            >
-              <RefreshCw className="w-4 h-4" />
-              초기화
-            </button>
-          </div>
-
-          <div className="space-y-3 mb-6 max-h-[300px] overflow-auto">
-            {previews.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
-                <FolderOpen className="w-10 h-10 mb-2 opacity-50" />
-                <p className="text-sm">파일을 선택하세요</p>
+          {/* File List */}
+          <div className="max-h-[400px] overflow-auto space-y-1 rounded-xl bg-secondary/30 p-2">
+            {isLoadingFolder ? (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : folderContents.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Folder className="w-10 h-10 mb-2 opacity-50" />
+                <p className="text-sm">폴더가 비어있습니다</p>
               </div>
             ) : (
-              previews.map((preview, index) => (
-                <motion.div
-                  key={preview.originalPath}
-                  className="flex items-center gap-3 p-3 rounded-xl bg-secondary/50"
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm truncate ${renamed ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                      {preview.originalName}
-                    </p>
-                  </div>
-                  <ArrowRight className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className={`text-sm truncate ${renamed ? "text-accent font-medium" : "text-primary"}`}>
-                      {preview.newName}
-                    </p>
-                  </div>
-                  {renamed && (
-                    <CheckCircle2 className="w-4 h-4 text-accent flex-shrink-0" />
-                  )}
-                </motion.div>
-              ))
+              <>
+                {/* Folders */}
+                {folders.map((folder) => (
+                  <motion.div
+                    key={folder.path}
+                    onClick={() => navigateTo(folder.path)}
+                    className="flex items-center gap-3 p-2.5 rounded-lg hover:bg-secondary cursor-pointer transition-colors"
+                    whileHover={{ x: 2 }}
+                  >
+                    <Folder className="w-5 h-5 text-accent flex-shrink-0" />
+                    <span className="text-sm text-foreground truncate flex-1">{folder.name}</span>
+                    <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                  </motion.div>
+                ))}
+
+                {/* Files */}
+                {files.map((file) => {
+                  const isSelected = selectedFiles.has(file.path);
+                  return (
+                    <motion.div
+                      key={file.path}
+                      onClick={() => toggleFile(file.path)}
+                      className={`flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-all ${
+                        isSelected
+                          ? 'bg-primary/15 border border-primary/30'
+                          : 'hover:bg-secondary border border-transparent'
+                      }`}
+                      whileHover={{ scale: 1.01 }}
+                      whileTap={{ scale: 0.99 }}
+                    >
+                      <div className={`w-5 h-5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                        isSelected ? 'bg-primary border-primary' : 'border-muted-foreground'
+                      }`}>
+                        {isSelected && <Check className="w-3 h-3 text-primary-foreground" />}
+                      </div>
+                      <FileText className="w-5 h-5 text-primary flex-shrink-0" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-foreground truncate">{file.name}</p>
+                        <p className="text-xs text-muted-foreground">{file.sizeFormatted}</p>
+                      </div>
+                    </motion.div>
+                  );
+                })}
+              </>
             )}
           </div>
 
-          {/* Action Button */}
-          <motion.button
-            onClick={handleRename}
-            disabled={isRenaming || renamed || selectedFiles.length === 0}
-            className={`w-full flex items-center justify-center gap-2 px-6 py-3 rounded-xl font-medium transition-all ${
-              renamed
-                ? "bg-accent/20 text-accent"
-                : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
-            } disabled:opacity-50`}
-            whileHover={{ scale: 1.01 }}
-            whileTap={{ scale: 0.99 }}
-          >
-            {isRenaming ? (
-              <>
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                >
-                  <RefreshCw className="w-5 h-5" />
-                </motion.div>
-                <span>변경 중...</span>
-              </>
-            ) : renamed ? (
-              <>
-                <CheckCircle2 className="w-5 h-5" />
-                <span>{previews.length}개 파일 이름 변경 완료!</span>
-              </>
-            ) : (
-              <>
-                <Play className="w-5 h-5" />
-                <span>이름 변경 실행</span>
-              </>
-            )}
-          </motion.button>
-
-          {!renamed && selectedFiles.length > 0 && (
-            <div className="flex items-center gap-2 mt-4 text-xs text-muted-foreground">
-              <AlertCircle className="w-4 h-4" />
-              <span>실행 후 히스토리에서 되돌릴 수 있습니다</span>
+          {/* Selected Count */}
+          {selectedFiles.size > 0 && (
+            <div className="mt-3 px-3 py-2 rounded-lg bg-primary/10 border border-primary/20">
+              <p className="text-sm text-primary font-medium">
+                {selectedFiles.size}개 파일 선택됨
+              </p>
             </div>
           )}
+        </div>
+
+        {/* Right: Rename Settings & Preview */}
+        <div className="space-y-4">
+          {/* Rename Mode Selector */}
+          <div className="glass rounded-2xl p-4 border border-border">
+            <h2 className="text-sm font-medium text-muted-foreground mb-3">이름 변경 방식</h2>
+            <div className="grid grid-cols-4 gap-2">
+              {renameModes.map((mode) => {
+                const Icon = mode.icon;
+                const isActive = renameMode === mode.id;
+                return (
+                  <motion.button
+                    key={mode.id}
+                    onClick={() => { setRenameMode(mode.id); setRenamed(false); }}
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl transition-all ${
+                      isActive
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-secondary/50 text-muted-foreground hover:bg-secondary hover:text-foreground'
+                    }`}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <Icon className="w-5 h-5" />
+                    <span className="text-xs font-medium">{mode.name}</span>
+                  </motion.button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-muted-foreground mt-2 text-center">
+              {renameModes.find(m => m.id === renameMode)?.description}
+            </p>
+          </div>
+
+          {/* Rename Settings */}
+          <div className="glass rounded-2xl p-5 border border-border">
+            <h2 className="text-lg font-medium text-foreground mb-4">규칙 설정</h2>
+
+            <AnimatePresence mode="wait">
+              {renameMode === "pattern" && (
+                <motion.div
+                  key="pattern"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-4"
+                >
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-blue-400" />
+                        접두사
+                      </label>
+                      <input
+                        type="text"
+                        value={prefix}
+                        onChange={(e) => { setPrefix(e.target.value); setRenamed(false); }}
+                        placeholder="예: 여행_"
+                        className="w-full px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-green-400" />
+                        접미사
+                      </label>
+                      <input
+                        type="text"
+                        value={suffix}
+                        onChange={(e) => { setSuffix(e.target.value); setRenamed(false); }}
+                        placeholder="예: _final"
+                        className="w-full px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Serial Number Toggle */}
+                  <div className="p-3 rounded-lg bg-secondary/50 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-amber-400" />
+                        <Hash className="w-4 h-4 text-muted-foreground" />
+                        <span className="text-sm text-foreground">일련번호</span>
+                      </div>
+                      <button
+                        onClick={() => { setUseNumber(!useNumber); setRenamed(false); }}
+                        className={`w-10 h-5 rounded-full transition-colors ${useNumber ? "bg-primary" : "bg-muted"}`}
+                      >
+                        <motion.div
+                          className="w-4 h-4 bg-white rounded-full shadow-sm"
+                          animate={{ x: useNumber ? 22 : 2 }}
+                        />
+                      </button>
+                    </div>
+
+                    {useNumber && (
+                      <motion.div
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        className="flex items-center gap-3 pt-2 border-t border-border/50"
+                      >
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-muted-foreground">시작:</span>
+                          <input
+                            type="number"
+                            value={startNumber}
+                            onChange={(e) => { setStartNumber(Number(e.target.value)); setRenamed(false); }}
+                            min={1}
+                            className="w-14 px-2 py-1 bg-secondary rounded text-sm text-foreground text-center focus:outline-none focus:ring-2 focus:ring-primary/50"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs text-muted-foreground">위치:</span>
+                          <div className="flex rounded-lg overflow-hidden border border-border">
+                            <button
+                              onClick={() => { setNumberPosition("before"); setRenamed(false); }}
+                              className={`px-2 py-1 text-xs transition-colors ${
+                                numberPosition === "before" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                              }`}
+                            >
+                              앞
+                            </button>
+                            <button
+                              onClick={() => { setNumberPosition("after"); setRenamed(false); }}
+                              className={`px-2 py-1 text-xs transition-colors ${
+                                numberPosition === "after" ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                              }`}
+                            >
+                              뒤
+                            </button>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </div>
+
+                  {/* Original Name Toggle */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/50">
+                    <div className="flex items-center gap-2">
+                      <Type className="w-4 h-4 text-muted-foreground" />
+                      <span className="text-sm text-foreground">원본 이름 유지</span>
+                    </div>
+                    <button
+                      onClick={() => { setKeepOriginalName(!keepOriginalName); setRenamed(false); }}
+                      className={`w-10 h-5 rounded-full transition-colors ${keepOriginalName ? "bg-primary" : "bg-muted"}`}
+                    >
+                      <motion.div
+                        className="w-4 h-4 bg-white rounded-full shadow-sm"
+                        animate={{ x: keepOriginalName ? 22 : 2 }}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Separator */}
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/50">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-foreground">구분자</span>
+                    </div>
+                    <div className="flex rounded-lg overflow-hidden border border-border">
+                      {(["", "_", "-"] as const).map((sep) => (
+                        <button
+                          key={sep || "none"}
+                          onClick={() => { setSeparator(sep); setRenamed(false); }}
+                          className={`px-3 py-1 text-xs transition-colors ${
+                            separator === sep ? "bg-primary text-primary-foreground" : "bg-secondary text-muted-foreground"
+                          }`}
+                        >
+                          {sep === "" ? "없음" : sep === "_" ? "밑줄 _" : "하이픈 -"}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {renameMode === "replace" && (
+                <motion.div
+                  key="replace"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">찾을 텍스트</label>
+                    <input
+                      type="text"
+                      value={findText}
+                      onChange={(e) => { setFindText(e.target.value); setRenamed(false); }}
+                      placeholder="바꿀 텍스트를 입력하세요"
+                      className="w-full px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">바꿀 텍스트</label>
+                    <input
+                      type="text"
+                      value={replaceText}
+                      onChange={(e) => { setReplaceText(e.target.value); setRenamed(false); }}
+                      placeholder="새로운 텍스트를 입력하세요 (비워두면 삭제)"
+                      className="w-full px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                  </div>
+                </motion.div>
+              )}
+
+              {renameMode === "remove" && (
+                <motion.div
+                  key="remove"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                >
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">제거할 텍스트</label>
+                    <input
+                      type="text"
+                      value={removeText}
+                      onChange={(e) => { setRemoveText(e.target.value); setRenamed(false); }}
+                      placeholder="파일명에서 제거할 텍스트"
+                      className="w-full px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-2">
+                    예: "복사본", "(1)", "final" 등을 제거
+                  </p>
+                </motion.div>
+              )}
+
+              {renameMode === "date" && (
+                <motion.div
+                  key="date"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-4"
+                >
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">날짜 형식</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {["YYYYMMDD", "YYYY-MM-DD", "YYYY_MM_DD", "MMDD"].map((format) => (
+                        <button
+                          key={format}
+                          onClick={() => { setDateFormat(format); setRenamed(false); }}
+                          className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                            dateFormat === format
+                              ? 'bg-primary text-primary-foreground'
+                              : 'bg-secondary text-muted-foreground hover:bg-secondary/80'
+                          }`}
+                        >
+                          {format}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium text-muted-foreground mb-1.5 block">날짜 위치</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        onClick={() => { setDatePosition("prefix"); setRenamed(false); }}
+                        className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                          datePosition === "prefix"
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-secondary text-muted-foreground hover:bg-secondary/80'
+                        }`}
+                      >
+                        앞에 추가
+                      </button>
+                      <button
+                        onClick={() => { setDatePosition("suffix"); setRenamed(false); }}
+                        className={`px-3 py-2 rounded-lg text-sm transition-colors ${
+                          datePosition === "suffix"
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-secondary text-muted-foreground hover:bg-secondary/80'
+                        }`}
+                      >
+                        뒤에 추가
+                      </button>
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Live Pattern Preview */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <div className="flex items-center gap-2 text-xs text-muted-foreground mb-2">
+                <Eye className="w-3.5 h-3.5" />
+                <span>결과 미리보기</span>
+              </div>
+              <div className="flex items-center gap-1 p-3 rounded-lg bg-secondary/30 font-mono text-sm overflow-x-auto">
+                {patternExample.map((part, idx) => (
+                  <span
+                    key={idx}
+                    className={`px-1.5 py-0.5 rounded ${getPartColor(part.type)} ${getPartBg(part.type)}`}
+                  >
+                    {part.text}
+                  </span>
+                ))}
+              </div>
+              <div className="flex items-center gap-3 mt-2 text-xs text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-blue-400" /> 접두사
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" /> 번호
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-green-400" /> 접미사
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* File Preview */}
+          <div className="glass rounded-2xl p-5 border border-border">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-medium text-foreground">파일별 미리보기</h2>
+              <button onClick={handleReset} className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1">
+                <RefreshCw className="w-3 h-3" />
+                초기화
+              </button>
+            </div>
+
+            <div className="space-y-2 mb-4 max-h-[180px] overflow-auto">
+              {previews.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                  <FileText className="w-8 h-8 mb-2 opacity-50" />
+                  <p className="text-sm">파일을 선택하세요</p>
+                </div>
+              ) : (
+                previews.map((preview, index) => (
+                  <motion.div
+                    key={preview.originalPath}
+                    className="flex items-center gap-2 p-2.5 rounded-lg bg-secondary/50"
+                    initial={{ opacity: 0, y: -10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: index * 0.02 }}
+                  >
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs truncate ${renamed ? "text-muted-foreground line-through" : "text-muted-foreground"}`}>
+                        {preview.originalName}
+                      </p>
+                    </div>
+                    <ArrowRight className="w-3 h-3 text-primary flex-shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs truncate font-medium ${renamed ? "text-accent" : "text-foreground"}`}>
+                        {preview.newName}
+                      </p>
+                    </div>
+                    {renamed && <CheckCircle2 className="w-3.5 h-3.5 text-accent flex-shrink-0" />}
+                  </motion.div>
+                ))
+              )}
+            </div>
+
+            {/* Execute Button */}
+            <motion.button
+              onClick={handleRename}
+              disabled={isRenaming || renamed || selectedFiles.size === 0}
+              className={`w-full flex items-center justify-center gap-2 px-5 py-3 rounded-xl font-medium transition-all ${
+                renamed
+                  ? "bg-accent/20 text-accent"
+                  : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
+              } disabled:opacity-50`}
+              whileHover={{ scale: 1.01 }}
+              whileTap={{ scale: 0.99 }}
+            >
+              {isRenaming ? (
+                <>
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                  <span>변경 중...</span>
+                </>
+              ) : renamed ? (
+                <>
+                  <CheckCircle2 className="w-5 h-5" />
+                  <span>{previews.length}개 파일 이름 변경 완료!</span>
+                </>
+              ) : (
+                <>
+                  <Play className="w-5 h-5" />
+                  <span>이름 변경 실행</span>
+                </>
+              )}
+            </motion.button>
+
+            {!renamed && selectedFiles.size > 0 && (
+              <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
+                <AlertCircle className="w-3.5 h-3.5" />
+                <span>실행 후 히스토리에서 되돌릴 수 있습니다</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>

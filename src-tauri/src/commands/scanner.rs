@@ -302,3 +302,100 @@ pub fn get_file_info(path: String) -> Result<FileInfo, String> {
     let file_path = PathBuf::from(&path);
     get_file_info_internal(&file_path)
 }
+
+/// Fast directory listing - only reads immediate children (depth=0)
+/// Uses OS-specific optimizations where possible
+#[tauri::command]
+pub fn fast_list_directory(path: String) -> Result<Vec<FileInfo>, String> {
+    let dir_path = PathBuf::from(&path);
+
+    println!("[fast_list_directory] path: {}", path);
+
+    if !dir_path.exists() {
+        println!("[fast_list_directory] ERROR: Directory does not exist");
+        return Err(format!("Directory does not exist: {}", path));
+    }
+
+    if !dir_path.is_dir() {
+        println!("[fast_list_directory] ERROR: Not a directory");
+        return Err(format!("Path is not a directory: {}", path));
+    }
+
+    let mut files = Vec::new();
+
+    // Use fs::read_dir for immediate children only (no recursion)
+    // This is much faster than depth-based tree building
+    let entries = fs::read_dir(&dir_path).map_err(|e| {
+        println!("[fast_list_directory] ERROR read_dir: {}", e);
+        e.to_string()
+    })?;
+
+    let mut count = 0;
+    for entry in entries.filter_map(|e| e.ok()) {
+        let entry_path = entry.path();
+        count += 1;
+
+        // Skip hidden files for cleaner display
+        if is_hidden(&entry_path) {
+            continue;
+        }
+
+        // Get basic info without deep metadata collection
+        if let Ok(info) = get_file_info_fast(&entry_path) {
+            files.push(info);
+        }
+    }
+
+    println!("[fast_list_directory] total entries: {}, visible files: {}", count, files.len());
+
+    // Sort: directories first, then by name
+    files.sort_by(|a, b| {
+        match (a.is_directory, b.is_directory) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+        }
+    });
+
+    Ok(files)
+}
+
+/// Lightweight file info - minimal metadata for fast listing
+fn get_file_info_fast(path: &std::path::Path) -> Result<FileInfo, String> {
+    let metadata = fs::metadata(path).map_err(|e| e.to_string())?;
+
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_string();
+
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| format!(".{}", e.to_lowercase()))
+        .unwrap_or_default();
+
+    let size = if metadata.is_dir() { 0 } else { metadata.len() };
+
+    // Only get modified time (skip created_at for speed)
+    let modified_at = metadata
+        .modified()
+        .map(format_time)
+        .unwrap_or_else(|_| String::new());
+
+    let category = classify_extension(&extension);
+
+    Ok(FileInfo {
+        path: path.to_string_lossy().to_string(),
+        name,
+        extension,
+        size,
+        size_formatted: format_size(size),
+        created_at: String::new(), // Skip for speed
+        modified_at,
+        is_directory: metadata.is_dir(),
+        is_hidden: is_hidden(path),
+        category,
+    })
+}

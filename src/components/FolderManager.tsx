@@ -1,10 +1,11 @@
-import { useState, useEffect, useCallback } from "react";
-import { motion } from "framer-motion";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   FolderTree,
   Folder,
   FolderOpen,
   ChevronRight,
+  ChevronUp,
   ChevronDown,
   FileText,
   Image,
@@ -12,9 +13,7 @@ import {
   Music,
   Archive,
   Code,
-  Plus,
   Search,
-  MoreHorizontal,
   RefreshCw,
   HardDrive,
   Loader2,
@@ -25,24 +24,30 @@ import {
   FileImage,
   Sparkles,
   ArrowLeft,
+  Settings2,
+  Plus,
+  X,
+  Package,
+  Check,
 } from "lucide-react";
-import { fileApi, analyzerApi, rulesApi, isTauri, formatFileSize } from "@/lib/tauri-api";
-import type { FileInfo, FolderTreeNode, FileCategory, DriveInfo, FolderStats } from "@/lib/types";
-import RulePreviewModal from "./RuleManagement/RulePreviewModal";
+import { fileApi, rulesApi, isTauri } from "@/lib/tauri-api";
+import type { FileInfo, FileCategory, DriveInfo, UnifiedPreview } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
-
-interface FolderItem {
-  id: string;
-  name: string;
-  path: string;
-  children?: FolderItem[];
-  files?: number;
-  isExpanded?: boolean;
-}
+import { CATEGORY_INFO } from "@/lib/types";
 
 interface QuickAccessFolder {
   name: string;
   path: string;
+}
+
+interface ExtensionGroup {
+  id: FileCategory;
+  name: string;
+  icon: typeof FileText;
+  color: string;
+  extensions: string[];
+  folder: string;
+  enabled: boolean;
 }
 
 // Map category to icon
@@ -52,92 +57,10 @@ const categoryIcons: Record<FileCategory, typeof FileText> = {
   videos: Video,
   music: Music,
   archives: Archive,
-  installers: Archive,
+  installers: Package,
   code: Code,
   others: File,
 };
-
-function convertTreeNodeToFolderItem(node: FolderTreeNode, parentPath: string = ""): FolderItem {
-  const fullPath = parentPath ? `${parentPath}/${node.name}` : node.name;
-  return {
-    id: fullPath,
-    name: node.name,
-    path: node.path,
-    files: node.fileCount,
-    children: node.children?.map(child => convertTreeNodeToFolderItem(child, fullPath)),
-  };
-}
-
-function FolderTreeItem({
-  folder,
-  level = 0,
-  selectedId,
-  onSelect,
-}: {
-  folder: FolderItem;
-  level?: number;
-  selectedId: string | null;
-  onSelect: (folder: FolderItem) => void;
-}) {
-  const [isOpen, setIsOpen] = useState(level === 0);
-  const hasChildren = folder.children && folder.children.length > 0;
-  const isSelected = selectedId === folder.id;
-
-  return (
-    <div>
-      <motion.div
-        onClick={() => {
-          onSelect(folder);
-          if (hasChildren) setIsOpen(!isOpen);
-        }}
-        className={`flex items-center gap-2 px-3 py-2 rounded-lg cursor-pointer transition-all ${
-          isSelected
-            ? "bg-primary/15 text-primary"
-            : "text-foreground hover:bg-secondary"
-        }`}
-        style={{ paddingLeft: `${level * 16 + 12}px` }}
-        whileHover={{ x: 2 }}
-      >
-        {hasChildren ? (
-          isOpen ? (
-            <ChevronDown className="w-4 h-4 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="w-4 h-4 text-muted-foreground" />
-          )
-        ) : (
-          <div className="w-4" />
-        )}
-        {isOpen && hasChildren ? (
-          <FolderOpen className="w-4 h-4 text-primary" />
-        ) : (
-          <Folder className="w-4 h-4 text-muted-foreground" />
-        )}
-        <span className="text-sm font-medium flex-1 truncate">{folder.name}</span>
-        {folder.files !== undefined && (
-          <span className="text-xs text-muted-foreground">{folder.files}</span>
-        )}
-      </motion.div>
-
-      {hasChildren && isOpen && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: "auto" }}
-          exit={{ opacity: 0, height: 0 }}
-        >
-          {folder.children?.map((child) => (
-            <FolderTreeItem
-              key={child.id}
-              folder={child}
-              level={level + 1}
-              selectedId={selectedId}
-              onSelect={onSelect}
-            />
-          ))}
-        </motion.div>
-      )}
-    </div>
-  );
-}
 
 // Icon mapping for quick access folders
 const quickAccessIcons: Record<string, typeof Home> = {
@@ -150,23 +73,94 @@ const quickAccessIcons: Record<string, typeof Home> = {
   "음악": Music,
 };
 
+// Default extension groups
+const defaultExtensionGroups: ExtensionGroup[] = [
+  {
+    id: "images",
+    name: "이미지",
+    icon: Image,
+    color: "hsl(340, 82%, 52%)",
+    extensions: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico", ".heic"],
+    folder: "이미지",
+    enabled: true,
+  },
+  {
+    id: "documents",
+    name: "문서",
+    icon: FileText,
+    color: "hsl(207, 90%, 54%)",
+    extensions: [".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".txt", ".rtf", ".hwp"],
+    folder: "문서",
+    enabled: true,
+  },
+  {
+    id: "videos",
+    name: "동영상",
+    icon: Video,
+    color: "hsl(270, 70%, 55%)",
+    extensions: [".mp4", ".mov", ".avi", ".mkv", ".wmv", ".flv", ".webm"],
+    folder: "동영상",
+    enabled: true,
+  },
+  {
+    id: "music",
+    name: "오디오",
+    icon: Music,
+    color: "hsl(160, 84%, 39%)",
+    extensions: [".mp3", ".wav", ".flac", ".aac", ".m4a", ".ogg", ".wma"],
+    folder: "음악",
+    enabled: true,
+  },
+  {
+    id: "archives",
+    name: "압축파일",
+    icon: Archive,
+    color: "hsl(35, 92%, 50%)",
+    extensions: [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2"],
+    folder: "압축파일",
+    enabled: true,
+  },
+  {
+    id: "installers",
+    name: "설치파일",
+    icon: Package,
+    color: "hsl(280, 70%, 50%)",
+    extensions: [".exe", ".msi", ".dmg", ".pkg", ".deb", ".rpm", ".app"],
+    folder: "설치파일",
+    enabled: true,
+  },
+  {
+    id: "code",
+    name: "소스코드",
+    icon: Code,
+    color: "hsl(180, 70%, 45%)",
+    extensions: [".js", ".ts", ".tsx", ".py", ".java", ".html", ".css", ".json", ".xml", ".yml", ".md"],
+    folder: "코드",
+    enabled: true,
+  },
+];
+
 export default function FolderManager() {
-  const [folders, setFolders] = useState<FolderItem[]>([]);
   const [quickAccessFolders, setQuickAccessFolders] = useState<QuickAccessFolder[]>([]);
   const [drives, setDrives] = useState<DriveInfo[]>([]);
-  const [selectedFolder, setSelectedFolder] = useState<FolderItem | null>(null);
   const [folderContents, setFolderContents] = useState<FileInfo[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
-  const [isLoadingTree, setIsLoadingTree] = useState(false);
-  const [isLoadingContents, setIsLoadingContents] = useState(false);
-  const [currentBasePath, setCurrentBasePath] = useState<string>("");
-  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [showPreviewModal, setShowPreviewModal] = useState(false);
-  const [isOrganizing, setIsOrganizing] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [currentPath, setCurrentPath] = useState<string>("");
   const [navigationHistory, setNavigationHistory] = useState<string[]>([]);
-  const [folderStats, setFolderStats] = useState<FolderStats | null>(null);
-  const [isLoadingStats, setIsLoadingStats] = useState(false);
+
+  // Extension groups
+  const [extensionGroups, setExtensionGroups] = useState<ExtensionGroup[]>(defaultExtensionGroups);
+  const [showSettings, setShowSettings] = useState(false);
+  const [editingGroup, setEditingGroup] = useState<FileCategory | null>(null);
+  const [newExtension, setNewExtension] = useState("");
+
+  // Organize state
+  const [isOrganizing, setIsOrganizing] = useState(false);
+  const [organizePreview, setOrganizePreview] = useState<UnifiedPreview[] | null>(null);
+  const [showOrganizePanel, setShowOrganizePanel] = useState(false);
+  const [disabledGroups, setDisabledGroups] = useState<Set<string>>(new Set());
+
   const { toast } = useToast();
 
   // Load drives
@@ -193,130 +187,105 @@ export default function FolderManager() {
     }
   }, []);
 
-  // Load folder tree for a specific path
-  const loadFolderTree = useCallback(async (basePath?: string, addToHistory: boolean = true) => {
-    setIsLoadingTree(true);
+  // Navigate to folder
+  const navigateTo = useCallback(async (path: string, addToHistory: boolean = true) => {
+    setIsLoading(true);
+    setShowOrganizePanel(false);
+    setOrganizePreview(null);
+
     try {
       if (isTauri()) {
-        const pathToUse = basePath || await fileApi.getDesktopPath();
-
-        // Add to navigation history
-        if (addToHistory && currentBasePath && currentBasePath !== pathToUse) {
-          setNavigationHistory(prev => [...prev, currentBasePath]);
+        if (addToHistory && currentPath && currentPath !== path) {
+          setNavigationHistory(prev => [...prev, currentPath]);
         }
 
-        setCurrentBasePath(pathToUse);
-        const tree = await analyzerApi.getFolderTree(pathToUse, 3);
-        const folderItem = convertTreeNodeToFolderItem(tree, "");
-        setFolders([folderItem]);
-
-        // Auto-select the root folder
-        setSelectedFolder(folderItem);
-      }
-    } catch (error) {
-      console.error("Failed to load folder tree:", error);
-      toast({
-        title: "폴더 트리 로드 실패",
-        description: String(error),
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoadingTree(false);
-    }
-  }, [toast]);
-
-  // Load folder contents when selection changes
-  const loadFolderContents = useCallback(async (folder: FolderItem) => {
-    setIsLoadingContents(true);
-    try {
-      if (isTauri()) {
-        const files = await fileApi.scanDirectory(folder.path, false, false);
+        const files = await fileApi.fastListDirectory(path);
         setFolderContents(files);
+        setCurrentPath(path);
       }
     } catch (error) {
-      console.error("Failed to load folder contents:", error);
-      toast({
-        title: "폴더 내용 로드 실패",
-        description: String(error),
-        variant: "destructive",
-      });
-      setFolderContents([]);
-    } finally {
-      setIsLoadingContents(false);
-    }
-  }, [toast]);
+      console.error("Failed to navigate:", error);
+      const errorMsg = String(error);
 
-  // Load folder statistics
-  const loadFolderStats = useCallback(async (path: string) => {
-    setIsLoadingStats(true);
-    setFolderStats(null);
-    try {
-      if (isTauri()) {
-        const stats = await analyzerApi.analyzeFolder(path);
-        setFolderStats(stats);
+      if (errorMsg.includes("Operation not permitted") || errorMsg.includes("Permission denied")) {
+        toast({
+          title: "접근 권한 없음",
+          description: "이 폴더에 접근할 수 없습니다. 시스템 보호 폴더이거나 권한이 필요합니다.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "폴더 열기 실패",
+          description: errorMsg,
+          variant: "destructive",
+        });
       }
-    } catch (error) {
-      console.error("Failed to load folder stats:", error);
     } finally {
-      setIsLoadingStats(false);
+      setIsLoading(false);
     }
-  }, []);
+  }, [currentPath, toast]);
 
-  useEffect(() => {
-    loadDrives();
-    loadQuickAccessFolders();
-    loadFolderTree();
-  }, [loadDrives, loadQuickAccessFolders, loadFolderTree]);
-
-  // Load folder stats when currentBasePath changes
-  useEffect(() => {
-    if (currentBasePath) {
-      loadFolderStats(currentBasePath);
-    }
-  }, [currentBasePath, loadFolderStats]);
-
-  const handleQuickAccessClick = (folder: QuickAccessFolder) => {
-    loadFolderTree(folder.path);
-  };
-
-  const handleDriveClick = (drive: DriveInfo) => {
-    loadFolderTree(drive.path);
-  };
-
-  // Go back to previous folder
-  const handleGoBack = () => {
+  // Go back
+  const goBack = useCallback(() => {
     if (navigationHistory.length > 0) {
       const previousPath = navigationHistory[navigationHistory.length - 1];
       setNavigationHistory(prev => prev.slice(0, -1));
-      loadFolderTree(previousPath, false);
+      navigateTo(previousPath, false);
     }
-  };
+  }, [navigationHistory, navigateTo]);
 
   // Go to parent folder
-  const handleGoToParent = () => {
-    if (currentBasePath) {
-      const parentPath = currentBasePath.split('/').slice(0, -1).join('/');
-      if (parentPath) {
-        loadFolderTree(parentPath);
+  const goToParent = useCallback(() => {
+    if (currentPath && currentPath !== '/') {
+      const parts = currentPath.split('/').filter(Boolean);
+      if (parts.length > 1) {
+        navigateTo('/' + parts.slice(0, -1).join('/'));
+      } else {
+        navigateTo('/');
       }
     }
-  };
+  }, [currentPath, navigateTo]);
 
-  // Organize current folder
-  const handleOrganizeFolder = async (excludedDestinations?: string[]) => {
-    if (!currentBasePath) return;
+  // Preview organize
+  const previewOrganize = useCallback(async () => {
+    if (!currentPath) return;
+
+    setIsLoading(true);
+    setDisabledGroups(new Set());
+    try {
+      const preview = await rulesApi.previewUnified(currentPath);
+      setOrganizePreview(preview);
+      setShowOrganizePanel(true);
+    } catch (error) {
+      console.error("Failed to preview:", error);
+      toast({
+        title: "미리보기 실패",
+        description: String(error),
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
+  }, [currentPath, toast]);
+
+  // Execute organize
+  const executeOrganize = useCallback(async () => {
+    if (!currentPath) return;
 
     setIsOrganizing(true);
     try {
-      const result = await rulesApi.executeUnified(currentBasePath, excludedDestinations);
+      // Filter out disabled groups
+      const excludedDestinations = Array.from(disabledGroups);
+      const result = await rulesApi.executeUnified(currentPath, excludedDestinations.length > 0 ? excludedDestinations : undefined);
       toast({
         title: "정리 완료",
         description: `${result.filesMoved}개 파일 이동, ${result.filesSkipped}개 건너뜀`,
       });
-      // Refresh the folder contents
-      await loadFolderTree(currentBasePath, false);
-      setShowPreviewModal(false);
+      setShowOrganizePanel(false);
+      setOrganizePreview(null);
+      await navigateTo(currentPath, false);
     } catch (error) {
+      console.error("Failed to organize:", error);
       toast({
         title: "정리 실패",
         description: String(error),
@@ -325,457 +294,651 @@ export default function FolderManager() {
     } finally {
       setIsOrganizing(false);
     }
-  };
+  }, [currentPath, disabledGroups, navigateTo, toast]);
 
-  useEffect(() => {
-    if (selectedFolder) {
-      loadFolderContents(selectedFolder);
-    }
-  }, [selectedFolder, loadFolderContents]);
-
-  const handleSelectFolder = (folder: FolderItem) => {
-    setSelectedFolder(folder);
-  };
-
-  // Create new folder
-  const handleCreateFolder = async () => {
-    if (!newFolderName.trim()) {
-      toast({
-        title: "폴더 이름을 입력하세요",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const parentPath = selectedFolder?.path || currentBasePath;
-    if (!parentPath) {
-      toast({
-        title: "폴더를 먼저 선택하세요",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    try {
-      if (isTauri()) {
-        const newFolderPath = `${parentPath}/${newFolderName.trim()}`;
-        await fileApi.createFolder(newFolderPath);
-        toast({
-          title: "폴더 생성 완료",
-          description: `'${newFolderName.trim()}' 폴더가 생성되었습니다.`,
-        });
-        // Refresh the folder tree and contents
-        await loadFolderTree(currentBasePath);
-        if (selectedFolder) {
-          await loadFolderContents(selectedFolder);
-        }
+  // Toggle group in preview
+  const togglePreviewGroup = useCallback((destination: string) => {
+    setDisabledGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(destination)) {
+        next.delete(destination);
       } else {
-        toast({
-          title: "폴더 생성 완료 (시뮬레이션)",
-          description: `'${newFolderName.trim()}' 폴더가 생성되었습니다.`,
-        });
+        next.add(destination);
       }
-      setNewFolderName("");
-      setIsCreatingFolder(false);
-    } catch (error) {
-      console.error("Failed to create folder:", error);
-      toast({
-        title: "폴더 생성 실패",
-        description: String(error),
-        variant: "destructive",
-      });
-    }
-  };
+      return next;
+    });
+  }, []);
 
-  const filteredFolders = folders.filter(folder =>
-    folder.name.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // Extension group management
+  const addExtension = useCallback((groupId: FileCategory) => {
+    if (!newExtension) return;
+    const ext = newExtension.startsWith('.') ? newExtension.toLowerCase() : `.${newExtension.toLowerCase()}`;
+    setExtensionGroups(prev =>
+      prev.map(g =>
+        g.id === groupId && !g.extensions.includes(ext)
+          ? { ...g, extensions: [...g.extensions, ext] }
+          : g
+      )
+    );
+    setNewExtension("");
+  }, [newExtension]);
 
+  const removeExtension = useCallback((groupId: FileCategory, ext: string) => {
+    setExtensionGroups(prev =>
+      prev.map(g =>
+        g.id === groupId
+          ? { ...g, extensions: g.extensions.filter(e => e !== ext) }
+          : g
+      )
+    );
+  }, []);
+
+  const toggleGroupEnabled = useCallback((groupId: FileCategory) => {
+    setExtensionGroups(prev =>
+      prev.map(g =>
+        g.id === groupId ? { ...g, enabled: !g.enabled } : g
+      )
+    );
+  }, []);
+
+  const updateGroupFolder = useCallback((groupId: FileCategory, folder: string) => {
+    setExtensionGroups(prev =>
+      prev.map(g =>
+        g.id === groupId ? { ...g, folder } : g
+      )
+    );
+  }, []);
+
+  // Initial load
+  useEffect(() => {
+    loadDrives();
+    loadQuickAccessFolders();
+    fileApi.getDesktopPath().then(path => navigateTo(path, false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Filter contents
   const filteredContents = folderContents.filter(file =>
     file.name.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Navigate into a folder from the contents panel
-  const handleNavigateToFolder = async (file: FileInfo) => {
-    if (!file.isDirectory) return;
+  // Separate folders and files
+  const folders = filteredContents.filter(f => f.isDirectory);
+  const files = filteredContents.filter(f => !f.isDirectory);
 
-    // Create a FolderItem for the clicked folder
-    const folderItem: FolderItem = {
-      id: file.path,
-      name: file.name,
-      path: file.path,
-    };
+  // Get current folder name
+  const currentFolderName = currentPath.split('/').pop() || currentPath || "폴더 선택";
 
-    // Load the folder tree from this new path
-    await loadFolderTree(file.path);
-  };
+  // Count files per category
+  const fileCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const group of extensionGroups) {
+      counts[group.id] = files.filter(f =>
+        group.extensions.includes(f.extension.toLowerCase())
+      ).length;
+    }
+    return counts;
+  }, [files, extensionGroups]);
+
+  // Group organize preview by destination
+  const groupedPreview = useMemo(() => {
+    if (!organizePreview) return null;
+    return organizePreview.reduce((acc, item) => {
+      const dest = item.destination;
+      if (!acc[dest]) {
+        acc[dest] = {
+          destination: dest,
+          matchType: item.matchType,
+          ruleName: item.rule?.name,
+          category: item.defaultRule?.category,
+          categoryLabel: item.defaultRule?.category
+            ? CATEGORY_INFO[item.defaultRule.category as FileCategory]?.label
+            : undefined,
+          files: [],
+        };
+      }
+      acc[dest].files.push(item);
+      return acc;
+    }, {} as Record<string, { destination: string; matchType: string; ruleName?: string; category?: string; categoryLabel?: string; files: UnifiedPreview[] }>);
+  }, [organizePreview]);
+
+  // Calculate enabled files count
+  const enabledFilesCount = useMemo(() => {
+    if (!organizePreview) return 0;
+    return organizePreview.filter(p => !disabledGroups.has(p.destination)).length;
+  }, [organizePreview, disabledGroups]);
 
   return (
     <div className="flex-1 p-6 overflow-auto">
       {/* Header */}
-      <div className="flex items-center gap-4 mb-6">
-        <div className="w-12 h-12 rounded-2xl gradient-accent flex items-center justify-center">
-          <FolderTree className="w-6 h-6 text-accent-foreground" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-semibold text-foreground">폴더 매니저</h1>
-          <p className="text-sm text-muted-foreground">
-            폴더를 탐색하고, 설정된 규칙에 따라 파일을 자동 분류하세요
-          </p>
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          <motion.button
-            onClick={() => loadFolderTree(undefined, false)}
-            disabled={isLoadingTree}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-secondary text-foreground hover:bg-secondary/80 transition-all disabled:opacity-50"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoadingTree ? 'animate-spin' : ''}`} />
-            <span>새로고침</span>
-          </motion.button>
-          <motion.button
-            onClick={() => setShowPreviewModal(true)}
-            disabled={!currentBasePath || isOrganizing}
-            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all disabled:opacity-50"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            title="규칙 설정에 따라 파일을 카테고리별 폴더로 자동 분류합니다"
-          >
-            <Sparkles className={`w-4 h-4 ${isOrganizing ? 'animate-spin' : ''}`} />
-            <span>규칙 기반 정리</span>
-          </motion.button>
-        </div>
-      </div>
-
-      {/* Navigation Bar */}
-      <div className="flex items-center gap-2 mb-4 p-3 rounded-xl bg-secondary/30 border border-border">
-        <motion.button
-          onClick={handleGoBack}
-          disabled={navigationHistory.length === 0}
-          className="p-2 rounded-lg hover:bg-secondary transition-colors disabled:opacity-30"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          title="뒤로"
-        >
-          <ArrowLeft className="w-4 h-4" />
-        </motion.button>
-        <motion.button
-          onClick={handleGoToParent}
-          disabled={!currentBasePath || currentBasePath === '/'}
-          className="p-2 rounded-lg hover:bg-secondary transition-colors disabled:opacity-30"
-          whileHover={{ scale: 1.05 }}
-          whileTap={{ scale: 0.95 }}
-          title="상위 폴더"
-        >
-          <FolderOpen className="w-4 h-4" />
-        </motion.button>
-        <div className="flex-1 px-3 py-1.5 text-sm text-muted-foreground truncate">
-          {currentBasePath || "경로를 선택하세요"}
-        </div>
-      </div>
-
-      {/* Folder Stats */}
-      {currentBasePath && (
-        <div className="mb-6 p-4 rounded-xl bg-gradient-to-r from-primary/5 to-accent/5 border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <FolderOpen className="w-5 h-5 text-primary" />
-              <span className="font-medium text-foreground">
-                {currentBasePath.split('/').pop() || currentBasePath}
-              </span>
-            </div>
-            {isLoadingStats ? (
-              <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-            ) : folderStats ? (
-              <div className="flex items-center gap-6 text-sm">
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">총 크기:</span>
-                  <span className="font-medium text-foreground">{folderStats.totalSizeFormatted}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">파일:</span>
-                  <span className="font-medium text-foreground">{folderStats.fileCount}개</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-muted-foreground">폴더:</span>
-                  <span className="font-medium text-foreground">{folderStats.folderCount}개</span>
-                </div>
-              </div>
-            ) : null}
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-2xl gradient-accent flex items-center justify-center">
+            <FolderTree className="w-6 h-6 text-accent-foreground" />
           </div>
-          {folderStats && Object.keys(folderStats.categoryBreakdown).length > 0 && (
-            <div className="mt-3 pt-3 border-t border-border/50">
-              <p className="text-xs text-muted-foreground mb-2">카테고리별 파일 분포</p>
-              <div className="flex flex-wrap gap-2">
-                {Object.entries(folderStats.categoryBreakdown).map(([category, stats]) => (
-                  <div
-                    key={category}
-                    className="px-2.5 py-1 rounded-lg bg-secondary/50 text-xs"
-                  >
-                    <span className="text-foreground font-medium">{category}</span>
-                    <span className="text-muted-foreground ml-1.5">
-                      {stats.count}개 ({stats.totalSizeFormatted})
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Drives Section */}
-      {drives.length > 0 && (
-        <div className="mb-6">
-          <p className="text-xs font-medium text-muted-foreground mb-3">드라이브 / 볼륨</p>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {drives.map((drive) => {
-              const isActive = currentBasePath === drive.path;
-              return (
-                <motion.button
-                  key={drive.path}
-                  onClick={() => handleDriveClick(drive)}
-                  className={`flex items-center gap-3 p-3 rounded-xl border transition-all text-left ${
-                    isActive
-                      ? "border-primary bg-primary/10"
-                      : "border-border bg-secondary/30 hover:bg-secondary/50"
-                  }`}
-                  whileHover={{ scale: 1.01 }}
-                  whileTap={{ scale: 0.99 }}
-                >
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                    isActive ? 'bg-primary/20' : 'bg-secondary'
-                  }`}>
-                    <HardDrive className={`w-5 h-5 ${isActive ? 'text-primary' : 'text-muted-foreground'}`} />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-foreground truncate">{drive.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {drive.availableFormatted} 사용 가능 / {drive.totalFormatted}
-                    </p>
-                    <div className="mt-1.5 h-1.5 bg-secondary rounded-full overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          drive.usagePercent > 90 ? 'bg-red-500' :
-                          drive.usagePercent > 70 ? 'bg-yellow-500' : 'bg-primary'
-                        }`}
-                        style={{ width: `${drive.usagePercent}%` }}
-                      />
-                    </div>
-                  </div>
-                </motion.button>
-              );
-            })}
+          <div>
+            <h1 className="text-2xl font-semibold text-foreground">폴더 매니저</h1>
+            <p className="text-sm text-muted-foreground">
+              폴더를 탐색하고 파일을 확장자별로 정리하세요
+            </p>
           </div>
         </div>
-      )}
+        <motion.button
+          onClick={() => setShowSettings(!showSettings)}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl transition-all ${
+            showSettings
+              ? "bg-primary text-primary-foreground"
+              : "bg-secondary text-foreground hover:bg-secondary/80"
+          }`}
+          whileHover={{ scale: 1.02 }}
+          whileTap={{ scale: 0.98 }}
+        >
+          <Settings2 className="w-4 h-4" />
+          <span>분류 설정</span>
+        </motion.button>
+      </div>
 
-      <div className="flex gap-6">
-        {/* Folder Tree */}
-        <div className="w-80 glass rounded-2xl p-4 border border-border h-fit max-h-[calc(100vh-300px)] overflow-auto">
-          {/* Quick Access */}
-          {quickAccessFolders.length > 0 && (
-            <div className="mb-4">
-              <p className="text-xs font-medium text-muted-foreground mb-2 px-1">빠른 액세스</p>
-              <div className="flex flex-wrap gap-2">
-                {quickAccessFolders.map((folder) => {
-                  const IconComponent = quickAccessIcons[folder.name] || Folder;
-                  const isActive = currentBasePath === folder.path;
+      {/* Extension Groups Settings */}
+      <AnimatePresence>
+        {showSettings && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="mb-6 overflow-hidden"
+          >
+            <div className="glass rounded-2xl p-5 border border-border">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="font-medium text-foreground">확장자 분류 그룹</h3>
+                <span className="text-xs text-muted-foreground">
+                  각 그룹을 클릭하여 확장자를 편집하세요
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-3">
+                {extensionGroups.map((group) => {
+                  const isEditing = editingGroup === group.id;
+                  const Icon = group.icon;
                   return (
-                    <motion.button
-                      key={folder.path}
-                      onClick={() => handleQuickAccessClick(folder)}
-                      className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${
-                        isActive
-                          ? "bg-primary/15 text-primary"
-                          : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                    <motion.div
+                      key={group.id}
+                      className={`relative p-3 rounded-xl border transition-all cursor-pointer ${
+                        isEditing
+                          ? "border-primary bg-primary/5"
+                          : group.enabled
+                            ? "border-border hover:border-primary/50 bg-secondary/30"
+                            : "border-border/50 bg-muted/20 opacity-60"
                       }`}
-                      whileHover={{ scale: 1.02 }}
-                      whileTap={{ scale: 0.98 }}
+                      onClick={() => setEditingGroup(isEditing ? null : group.id)}
+                      layout
                     >
-                      <IconComponent className="w-3.5 h-3.5" />
-                      <span>{folder.name}</span>
-                    </motion.button>
+                      {/* Enable/Disable Toggle */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleGroupEnabled(group.id); }}
+                        className={`absolute top-2 right-2 w-8 h-4 rounded-full transition-colors ${
+                          group.enabled ? "bg-primary" : "bg-muted"
+                        }`}
+                      >
+                        <motion.div
+                          className="w-3 h-3 bg-white rounded-full shadow-sm"
+                          animate={{ x: group.enabled ? 17 : 2 }}
+                        />
+                      </button>
+
+                      <div className="flex items-center gap-2 mb-2">
+                        <div
+                          className="w-8 h-8 rounded-lg flex items-center justify-center"
+                          style={{ backgroundColor: `${group.color}20` }}
+                        >
+                          <Icon className="w-4 h-4" style={{ color: group.color }} />
+                        </div>
+                        <div>
+                          <p className="text-sm font-medium text-foreground">{group.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {fileCounts[group.id] || 0}개 파일
+                          </p>
+                        </div>
+                      </div>
+
+                      {/* Extensions */}
+                      <div className="flex flex-wrap gap-1 mt-2">
+                        {group.extensions.slice(0, isEditing ? undefined : 4).map((ext) => (
+                          <span
+                            key={ext}
+                            className="relative group px-1.5 py-0.5 rounded text-xs"
+                            style={{
+                              backgroundColor: `${group.color}15`,
+                              color: group.color,
+                            }}
+                          >
+                            {ext}
+                            {isEditing && (
+                              <button
+                                onClick={(e) => { e.stopPropagation(); removeExtension(group.id, ext); }}
+                                className="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-destructive text-destructive-foreground flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                              >
+                                <X className="w-2 h-2" />
+                              </button>
+                            )}
+                          </span>
+                        ))}
+                        {!isEditing && group.extensions.length > 4 && (
+                          <span className="px-1.5 py-0.5 text-xs text-muted-foreground">
+                            +{group.extensions.length - 4}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Editing UI */}
+                      <AnimatePresence>
+                        {isEditing && (
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: "auto" }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className="mt-3 pt-3 border-t border-border space-y-2"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                value={newExtension}
+                                onChange={(e) => setNewExtension(e.target.value)}
+                                placeholder=".확장자"
+                                className="flex-1 px-2 py-1 bg-secondary rounded text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") addExtension(group.id);
+                                }}
+                              />
+                              <button
+                                onClick={() => addExtension(group.id)}
+                                className="p-1 rounded bg-primary/20 text-primary hover:bg-primary/30"
+                              >
+                                <Plus className="w-3 h-3" />
+                              </button>
+                            </div>
+                            <div>
+                              <label className="text-xs text-muted-foreground">대상 폴더</label>
+                              <input
+                                type="text"
+                                value={group.folder}
+                                onChange={(e) => updateGroupFolder(group.id, e.target.value)}
+                                className="w-full mt-1 px-2 py-1 bg-secondary rounded text-xs text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                              />
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </motion.div>
                   );
                 })}
               </div>
             </div>
-          )}
+          </motion.div>
+        )}
+      </AnimatePresence>
 
-          {/* Search */}
+      {/* Quick Access & Drives */}
+      <div className="mb-6 p-4 rounded-xl bg-secondary/30 border border-border">
+        <div className="flex flex-wrap items-center gap-2">
+          {quickAccessFolders.map((folder) => {
+            const IconComponent = quickAccessIcons[folder.name] || Folder;
+            const isActive = currentPath === folder.path;
+            return (
+              <motion.button
+                key={folder.path}
+                onClick={() => navigateTo(folder.path)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                  isActive
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <IconComponent className="w-4 h-4" />
+                <span>{folder.name}</span>
+              </motion.button>
+            );
+          })}
+
+          <div className="w-px h-6 bg-border mx-2" />
+
+          {drives.map((drive) => {
+            const isActive = currentPath.startsWith(drive.path);
+            return (
+              <motion.button
+                key={drive.path}
+                onClick={() => navigateTo(drive.path)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm transition-all ${
+                  isActive
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary"
+                }`}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                title={`${drive.availableFormatted} 사용 가능`}
+              >
+                <HardDrive className="w-4 h-4" />
+                <span>{drive.name}</span>
+              </motion.button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Navigation Bar */}
+      <div className="flex items-center gap-2 mb-4">
+        <div className="flex items-center gap-1">
+          <motion.button
+            onClick={goBack}
+            disabled={navigationHistory.length === 0}
+            className="p-2 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-30"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            title="뒤로"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </motion.button>
+          <motion.button
+            onClick={goToParent}
+            disabled={!currentPath || currentPath === '/'}
+            className="p-2 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-30"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            title="상위 폴더"
+          >
+            <ChevronUp className="w-4 h-4" />
+          </motion.button>
+        </div>
+
+        <div className="flex-1 flex items-center gap-1 px-3 py-2 rounded-xl bg-secondary/30 border border-border text-sm overflow-x-auto">
+          <motion.button
+            onClick={() => navigateTo('/')}
+            className="px-1.5 py-0.5 rounded hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors"
+            whileHover={{ scale: 1.02 }}
+          >
+            /
+          </motion.button>
+          {currentPath.split('/').filter(Boolean).map((part, index, arr) => {
+            const pathUpToHere = '/' + arr.slice(0, index + 1).join('/');
+            const isLast = index === arr.length - 1;
+            return (
+              <span key={pathUpToHere} className="flex items-center gap-1">
+                <ChevronRight className="w-3 h-3 text-muted-foreground" />
+                <motion.button
+                  onClick={() => !isLast && navigateTo(pathUpToHere)}
+                  className={`px-1.5 py-0.5 rounded transition-colors ${
+                    isLast
+                      ? 'text-foreground font-medium'
+                      : 'text-muted-foreground hover:bg-secondary hover:text-foreground cursor-pointer'
+                  }`}
+                  whileHover={!isLast ? { scale: 1.02 } : {}}
+                  disabled={isLast}
+                >
+                  {part}
+                </motion.button>
+              </span>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <motion.button
+            onClick={() => navigateTo(currentPath, false)}
+            disabled={isLoading}
+            className="p-2 rounded-lg bg-secondary hover:bg-secondary/80 transition-colors disabled:opacity-50"
+            whileHover={{ scale: 1.05 }}
+            whileTap={{ scale: 0.95 }}
+            title="새로고침"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </motion.button>
+          <motion.button
+            onClick={previewOrganize}
+            disabled={!currentPath || isLoading || files.length === 0}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-primary-foreground hover:bg-primary/90 transition-all disabled:opacity-50"
+            whileHover={{ scale: 1.02 }}
+            whileTap={{ scale: 0.98 }}
+            title="현재 폴더의 파일을 확장자별로 분류합니다"
+          >
+            <Sparkles className="w-4 h-4" />
+            <span>정리하기</span>
+          </motion.button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex gap-4">
+        {/* File Browser */}
+        <div className={`flex-1 glass rounded-2xl p-4 border border-border transition-all ${showOrganizePanel ? 'w-1/2' : 'w-full'}`}>
           <div className="relative mb-4">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
               type="text"
-              placeholder="폴더 검색..."
+              placeholder="검색..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-4 py-2.5 bg-secondary rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
           </div>
 
-          {/* Tree */}
-          {isLoadingTree ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {filteredFolders.map((folder) => (
-                <FolderTreeItem
-                  key={folder.id}
-                  folder={folder}
-                  selectedId={selectedFolder?.id || null}
-                  onSelect={handleSelectFolder}
-                />
-              ))}
-              {filteredFolders.length === 0 && (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  {isTauri() ? "폴더가 없습니다" : "Tauri 환경에서만 사용 가능합니다"}
-                </p>
-              )}
-            </div>
-          )}
-
-          {/* Add Folder */}
-          {isCreatingFolder ? (
-            <div className="mt-4 p-3 rounded-xl border border-primary/50 bg-secondary/30">
-              <input
-                type="text"
-                placeholder="폴더 이름 입력..."
-                value={newFolderName}
-                onChange={(e) => setNewFolderName(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleCreateFolder();
-                  if (e.key === 'Escape') {
-                    setIsCreatingFolder(false);
-                    setNewFolderName("");
-                  }
-                }}
-                autoFocus
-                className="w-full px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 mb-2"
-              />
-              <div className="flex gap-2">
-                <motion.button
-                  onClick={handleCreateFolder}
-                  className="flex-1 px-3 py-1.5 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  생성
-                </motion.button>
-                <motion.button
-                  onClick={() => {
-                    setIsCreatingFolder(false);
-                    setNewFolderName("");
-                  }}
-                  className="flex-1 px-3 py-1.5 rounded-lg bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  취소
-                </motion.button>
-              </div>
-            </div>
-          ) : (
-            <motion.button
-              onClick={() => setIsCreatingFolder(true)}
-              className="w-full mt-4 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-dashed border-border text-muted-foreground hover:text-foreground hover:border-primary/50 transition-colors"
-              whileHover={{ scale: 1.01 }}
-              whileTap={{ scale: 0.99 }}
-            >
-              <Plus className="w-4 h-4" />
-              <span className="text-sm">새 폴더</span>
-            </motion.button>
-          )}
-        </div>
-
-        {/* Folder Content */}
-        <div className="flex-1 glass rounded-2xl p-6 border border-border">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-3">
-              <FolderOpen className="w-6 h-6 text-primary" />
-              <h2 className="text-lg font-medium text-foreground truncate max-w-[300px]">
-                {selectedFolder?.name || "폴더를 선택하세요"}
-              </h2>
-              {selectedFolder && (
-                <span className="px-2 py-1 text-xs bg-primary/15 text-primary rounded-lg">
-                  {folderContents.length} 항목
-                </span>
-              )}
-            </div>
-            <button className="p-2 rounded-lg hover:bg-secondary transition-colors">
-              <MoreHorizontal className="w-5 h-5 text-muted-foreground" />
-            </button>
+          <div className="flex items-center gap-3 mb-4 pb-4 border-b border-border">
+            <FolderOpen className="w-5 h-5 text-primary" />
+            <span className="font-medium text-foreground">{currentFolderName}</span>
+            <span className="text-sm text-muted-foreground">
+              {folders.length}개 폴더, {files.length}개 파일
+            </span>
           </div>
 
-          {/* File List */}
-          {isLoadingContents ? (
+          {isLoading ? (
             <div className="flex items-center justify-center py-16">
               <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
             </div>
           ) : filteredContents.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <Folder className="w-12 h-12 mb-4 opacity-50" />
-              <p className="text-sm">
-                {selectedFolder ? "폴더가 비어있습니다" : "폴더를 선택하세요"}
-              </p>
+              <p className="text-sm">폴더가 비어있습니다</p>
             </div>
           ) : (
-            <div className="space-y-2 max-h-[calc(100vh-350px)] overflow-auto">
-              {filteredContents.map((file, index) => {
-                const IconComponent = file.isDirectory
-                  ? Folder
-                  : categoryIcons[file.category] || File;
+            <div className="space-y-1 max-h-[calc(100vh-450px)] overflow-auto">
+              {folders.map((folder) => (
+                <motion.div
+                  key={folder.path}
+                  onClick={() => navigateTo(folder.path)}
+                  className="flex items-center gap-3 p-3 rounded-xl hover:bg-secondary cursor-pointer transition-colors"
+                  whileHover={{ x: 4 }}
+                >
+                  <div className="w-10 h-10 rounded-lg bg-accent/10 flex items-center justify-center">
+                    <Folder className="w-5 h-5 text-accent" />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-foreground truncate">{folder.name}</p>
+                    <p className="text-xs text-muted-foreground">폴더</p>
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground" />
+                </motion.div>
+              ))}
 
+              {files.map((file) => {
+                const IconComponent = categoryIcons[file.category] || File;
+                const categoryColor = CATEGORY_INFO[file.category]?.color || "hsl(220, 10%, 50%)";
                 return (
-                  <motion.div
+                  <div
                     key={file.path}
-                    onClick={() => file.isDirectory && handleNavigateToFolder(file)}
-                    className={`flex items-center gap-4 p-3 rounded-xl hover:bg-secondary transition-colors ${
-                      file.isDirectory ? 'cursor-pointer' : 'cursor-default'
-                    }`}
-                    initial={{ opacity: 0, x: -20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: index * 0.02 }}
-                    whileHover={file.isDirectory ? { x: 4 } : {}}
+                    className="flex items-center gap-3 p-3 rounded-xl hover:bg-secondary/50 transition-colors"
                   >
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      file.isDirectory ? 'bg-accent/10' : 'bg-primary/10'
-                    }`}>
-                      <IconComponent className={`w-5 h-5 ${
-                        file.isDirectory ? 'text-accent' : 'text-primary'
-                      }`} />
+                    <div
+                      className="w-10 h-10 rounded-lg flex items-center justify-center"
+                      style={{ backgroundColor: `${categoryColor}20` }}
+                    >
+                      <IconComponent className="w-5 h-5" style={{ color: categoryColor }} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-foreground truncate">{file.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {file.isDirectory ? "폴더 - 클릭하여 열기" : file.sizeFormatted}
-                      </p>
+                      <p className="text-xs text-muted-foreground">{file.sizeFormatted}</p>
                     </div>
-                    {file.isDirectory && (
-                      <ChevronRight className="w-4 h-4 text-muted-foreground" />
-                    )}
-                    <p className="text-xs text-muted-foreground whitespace-nowrap">
-                      {file.modifiedAt.split(' ')[0]}
-                    </p>
-                  </motion.div>
+                    <p className="text-xs text-muted-foreground">{file.modifiedAt.split(' ')[0]}</p>
+                  </div>
                 );
               })}
             </div>
           )}
         </div>
-      </div>
 
-      {/* Preview Modal */}
-      {showPreviewModal && currentBasePath && (
-        <RulePreviewModal
-          sourcePath={currentBasePath}
-          onClose={() => setShowPreviewModal(false)}
-          onExecute={handleOrganizeFolder}
-        />
-      )}
+        {/* Organize Panel */}
+        <AnimatePresence>
+          {showOrganizePanel && (
+            <motion.div
+              initial={{ opacity: 0, x: 20, width: 0 }}
+              animate={{ opacity: 1, x: 0, width: "50%" }}
+              exit={{ opacity: 0, x: 20, width: 0 }}
+              className="glass rounded-2xl p-4 border border-border overflow-hidden"
+            >
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-5 h-5 text-primary" />
+                  <h3 className="font-medium text-foreground">정리 미리보기</h3>
+                </div>
+                <motion.button
+                  onClick={() => setShowOrganizePanel(false)}
+                  className="p-1.5 rounded-lg hover:bg-secondary transition-colors"
+                  whileHover={{ scale: 1.05 }}
+                >
+                  <X className="w-4 h-4" />
+                </motion.button>
+              </div>
+
+              {organizePreview && organizePreview.length > 0 ? (
+                <>
+                  <p className="text-sm text-muted-foreground mb-4">
+                    {enabledFilesCount === organizePreview.length
+                      ? `${organizePreview.length}개 파일이 분류됩니다`
+                      : `${enabledFilesCount}개 파일이 분류됩니다 (${organizePreview.length - enabledFilesCount}개 제외)`}
+                  </p>
+
+                  <div className="space-y-2 max-h-[calc(100vh-550px)] overflow-auto mb-4">
+                    {groupedPreview && Object.values(groupedPreview).map((group) => {
+                      const isEnabled = !disabledGroups.has(group.destination);
+                      const category = group.category as FileCategory | undefined;
+                      const Icon = category ? categoryIcons[category] : Folder;
+                      const color = category ? CATEGORY_INFO[category]?.color : undefined;
+
+                      return (
+                        <motion.div
+                          key={group.destination}
+                          className={`p-3 rounded-xl border transition-all ${
+                            isEnabled
+                              ? "bg-secondary/30 border-border"
+                              : "bg-muted/20 border-border/50 opacity-60"
+                          }`}
+                          layout
+                        >
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-8 h-8 rounded-lg flex items-center justify-center"
+                                style={{ backgroundColor: color ? `${color}20` : "hsl(var(--secondary))" }}
+                              >
+                                <Icon
+                                  className="w-4 h-4"
+                                  style={{ color: color || "hsl(var(--primary))" }}
+                                />
+                              </div>
+                              <div>
+                                <span className={`text-sm font-medium ${isEnabled ? "text-foreground" : "text-muted-foreground line-through"}`}>
+                                  {group.ruleName || group.categoryLabel || '기타'}
+                                </span>
+                                <span className={`ml-2 text-xs px-2 py-0.5 rounded-full ${
+                                  group.matchType === 'custom'
+                                    ? 'bg-primary/10 text-primary'
+                                    : 'bg-secondary text-muted-foreground'
+                                }`}>
+                                  {group.matchType === 'custom' ? '사용자 규칙' : '확장자 기반'}
+                                </span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={() => togglePreviewGroup(group.destination)}
+                              className={`w-10 h-5 rounded-full transition-colors ${
+                                isEnabled ? "bg-primary" : "bg-muted"
+                              }`}
+                            >
+                              <motion.div
+                                className="w-4 h-4 bg-white rounded-full shadow-sm"
+                                animate={{ x: isEnabled ? 22 : 2 }}
+                                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                              />
+                            </button>
+                          </div>
+                          <p className="text-xs text-muted-foreground mb-2 pl-10">
+                            → {group.destination.split('/').slice(-2).join('/')}
+                          </p>
+                          <div className="space-y-0.5 pl-10">
+                            {group.files.slice(0, 3).map((item) => (
+                              <div key={item.file.path} className="text-xs text-muted-foreground flex items-center gap-1">
+                                <File className="w-3 h-3" />
+                                <span className="truncate">{item.file.name}</span>
+                              </div>
+                            ))}
+                            {group.files.length > 3 && (
+                              <div className="text-xs text-muted-foreground pl-4">
+                                ... 외 {group.files.length - 3}개
+                              </div>
+                            )}
+                          </div>
+                        </motion.div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="flex gap-2">
+                    <motion.button
+                      onClick={() => {
+                        setShowOrganizePanel(false);
+                        setOrganizePreview(null);
+                      }}
+                      className="flex-1 px-4 py-2.5 rounded-xl bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      취소
+                    </motion.button>
+                    <motion.button
+                      onClick={executeOrganize}
+                      disabled={isOrganizing || enabledFilesCount === 0}
+                      className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
+                      whileHover={{ scale: 1.02 }}
+                      whileTap={{ scale: 0.98 }}
+                    >
+                      {isOrganizing ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          <span>정리 중...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Check className="w-4 h-4" />
+                          <span>정리 실행</span>
+                        </>
+                      )}
+                    </motion.button>
+                  </div>
+                </>
+              ) : organizePreview && organizePreview.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+                  <File className="w-8 h-8 mb-2 opacity-50" />
+                  <p className="text-sm">정리할 파일이 없습니다</p>
+                  <p className="text-xs mt-1">모든 파일이 이미 정리되어 있습니다</p>
+                </div>
+              ) : (
+                <div className="flex items-center justify-center py-8">
+                  <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+                </div>
+              )}
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     </div>
   );
 }

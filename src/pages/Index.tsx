@@ -3,7 +3,6 @@ import Sidebar from "@/components/Sidebar";
 import DesktopView from "@/components/DesktopView";
 import FolderManager from "@/components/FolderManager";
 import BatchRename from "@/components/BatchRename";
-import ExtensionSort from "@/components/ExtensionSort";
 import DuplicateManager from "@/components/DuplicateManager";
 import FolderCompare from "@/components/FolderCompare";
 
@@ -18,8 +17,6 @@ const Index = () => {
         return <FolderManager />;
       case "batch-rename":
         return <BatchRename />;
-      case "extension-sort":
-        return <ExtensionSort />;
       case "duplicate-manager":
         return <DuplicateManager />;
       case "folder-compare":
