@@ -25,6 +25,7 @@ import {
   Scissors,
   Calendar,
   Eye,
+  Wrench,
 } from "lucide-react";
 import { fileApi, renamerApi, isTauri } from "@/lib/tauri-api";
 import type { FileInfo, RenameRule, RenamePreview, DriveInfo } from "@/lib/types";
@@ -43,7 +44,7 @@ const quickAccessIcons: Record<string, typeof Home> = {
 };
 
 // Rename mode definitions
-type RenameMode = "pattern" | "replace" | "remove" | "date";
+type RenameMode = "pattern" | "replace" | "remove" | "date" | "fix";
 
 interface RenameModeInfo {
   id: RenameMode;
@@ -57,7 +58,24 @@ const renameModes: RenameModeInfo[] = [
   { id: "replace", name: "찾아 바꾸기", icon: Replace, description: "특정 텍스트를 다른 텍스트로" },
   { id: "remove", name: "텍스트 제거", icon: Scissors, description: "원하지 않는 텍스트 삭제" },
   { id: "date", name: "날짜 추가", icon: Calendar, description: "파일명에 날짜 추가" },
+  { id: "fix", name: "파일명 고치기", icon: Wrench, description: "한글 자모 분리 등 깨진 파일명 수정" },
 ];
+
+// 한글 자모 결합 함수 - NFD (분리형) -> NFC (조합형)
+function combineKoreanJamo(text: string): string {
+  // Unicode Normalization Form C (NFC)로 변환
+  // NFD로 분리된 한글을 NFC로 조합
+  return text.normalize('NFC');
+}
+
+// 파일명에 분리된 자모가 있는지 확인
+function hasDecomposedKorean(text: string): boolean {
+  // 한글 자모 영역 (U+1100-U+11FF: 한글 자모, U+3130-U+318F: 호환용 자모)
+  // NFD 분해된 한글은 이 영역의 문자를 포함
+  const jamoRegex = /[\u1100-\u11FF\u3130-\u318F]/;
+  // NFC와 원본이 다른 경우 분리된 자모가 있는 것
+  return text !== text.normalize('NFC') || jamoRegex.test(text);
+}
 
 export default function BatchRename() {
   // File browser state
@@ -300,6 +318,13 @@ export default function BatchRename() {
           ];
         }
       }
+      case "fix": {
+        const fixedName = combineKoreanJamo(sampleFileName);
+        const hasIssue = fixedName !== sampleFileName;
+        return [
+          { text: fixedName, type: hasIssue ? 'prefix' as const : 'name' as const }
+        ];
+      }
       default:
         return [{ text: sampleFileName, type: 'name' as const }];
     }
@@ -411,6 +436,11 @@ export default function BatchRename() {
           } else {
             newName = name + "_" + dateStr + ext;
           }
+          break;
+        }
+        case "fix": {
+          // 한글 자모 결합 (NFD -> NFC)
+          newName = combineKoreanJamo(fullName);
           break;
         }
       }
@@ -1006,6 +1036,39 @@ export default function BatchRename() {
                         뒤에 추가
                       </button>
                     </div>
+                  </div>
+                </motion.div>
+              )}
+
+              {renameMode === "fix" && (
+                <motion.div
+                  key="fix"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="space-y-4"
+                >
+                  <div className="p-4 rounded-lg bg-secondary/50 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <Wrench className="w-5 h-5 text-amber-400" />
+                      <span className="font-medium text-foreground">한글 자모 결합</span>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      macOS와 Windows 간 호환성 문제로 인해 파일명이 분리된 자모로 표시되는 경우를 수정합니다.
+                    </p>
+                    <div className="p-3 rounded bg-secondary/70 space-y-2 font-mono text-sm">
+                      <div className="flex items-center gap-2">
+                        <span className="text-destructive">Before:</span>
+                        <span className="text-muted-foreground">ㅎㅏㄴㄱㅡㄹ.txt</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-accent">After:</span>
+                        <span className="text-foreground">한글.txt</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      NFD (분리형) → NFC (조합형)으로 유니코드 정규화를 수행합니다.
+                    </p>
                   </div>
                 </motion.div>
               )}

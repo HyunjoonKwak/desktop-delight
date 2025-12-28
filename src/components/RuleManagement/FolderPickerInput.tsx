@@ -38,8 +38,18 @@ export default function FolderPickerInput({
     }
   };
 
+  // Prevent drag events from Reorder.Item
+  const stopPropagation = (e: React.PointerEvent | React.MouseEvent | React.TouchEvent) => {
+    e.stopPropagation();
+  };
+
   return (
-    <div className="space-y-1.5">
+    <div
+      className="space-y-1.5"
+      onPointerDown={stopPropagation}
+      onMouseDown={stopPropagation}
+      onTouchStart={stopPropagation}
+    >
       {label && (
         <label className="text-xs font-medium text-muted-foreground block">
           {label}
@@ -54,6 +64,8 @@ export default function FolderPickerInput({
             onChange={(e) => onChange(e.target.value)}
             placeholder={placeholder}
             disabled={disabled}
+            onPointerDown={stopPropagation}
+            onMouseDown={stopPropagation}
             className={`w-full pl-10 pr-3 py-2.5 bg-secondary rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-50 disabled:cursor-not-allowed ${
               error ? "ring-2 ring-destructive/50" : ""
             }`}
@@ -63,6 +75,8 @@ export default function FolderPickerInput({
           type="button"
           onClick={handlePickFolder}
           disabled={disabled || isLoading}
+          onPointerDown={stopPropagation}
+          onMouseDown={stopPropagation}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl bg-secondary hover:bg-secondary/80 text-foreground transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           whileHover={{ scale: disabled ? 1 : 1.02 }}
           whileTap={{ scale: disabled ? 1 : 0.98 }}
