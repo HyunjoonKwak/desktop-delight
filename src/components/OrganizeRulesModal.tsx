@@ -443,6 +443,8 @@ function DefaultRuleItem({
   setExpandedDefaultRule,
   toggleDefaultRule,
   updateDefaultRule,
+  extensions,
+  onExtensionsChange,
 }: {
   rule: DefaultRule;
   index: number;
@@ -450,11 +452,32 @@ function DefaultRuleItem({
   setExpandedDefaultRule: (id: number | null) => void;
   toggleDefaultRule: (id: number) => void;
   updateDefaultRule: (id: number, updates: Partial<DefaultRule>) => void;
+  extensions: string[];
+  onExtensionsChange: (category: string, extensions: string[]) => void;
 }) {
   const dragControls = useDragControls();
   const category = rule.category as FileCategory;
   const Icon = categoryIcons[category] || File;
   const info = CATEGORY_INFO[category];
+  const [newExtension, setNewExtension] = useState("");
+
+  const handleAddExtension = () => {
+    if (!newExtension.trim()) return;
+    const ext = newExtension.startsWith(".")
+      ? newExtension.toLowerCase()
+      : `.${newExtension.toLowerCase()}`;
+    if (!extensions.includes(ext)) {
+      onExtensionsChange(rule.category, [...extensions, ext]);
+    }
+    setNewExtension("");
+  };
+
+  const handleRemoveExtension = (ext: string) => {
+    onExtensionsChange(
+      rule.category,
+      extensions.filter((e) => e !== ext)
+    );
+  };
 
   return (
     <Reorder.Item
@@ -548,21 +571,81 @@ function DefaultRuleItem({
             transition={{ duration: 0.2 }}
             className="overflow-hidden"
           >
-            <div className="px-4 pb-4 pt-0 space-y-3 border-t border-border mt-0 pt-4">
+            <div className="px-4 pb-4 pt-0 space-y-4 border-t border-border mt-0 pt-4">
+              {/* Folder Name Input */}
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-2 block">
-                  대상 폴더
+                  대상 폴더 이름
                 </label>
-                <FolderPickerInput
+                <input
+                  type="text"
                   value={rule.destination}
-                  onChange={(path) =>
+                  onChange={(e) =>
                     updateDefaultRule(rule.id, {
-                      destination: path,
+                      destination: e.target.value,
                     })
                   }
-                  placeholder={`${info?.label || category} 폴더 경로`}
+                  placeholder={`예: ${info?.label || category}`}
+                  className="w-full px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
                 />
+                <p className="text-xs text-muted-foreground mt-1">
+                  바탕화면 기준 상대 경로 또는 절대 경로를 입력하세요
+                </p>
               </div>
+
+              {/* Extensions Editor */}
+              <div>
+                <label className="text-xs font-medium text-muted-foreground mb-2 block">
+                  포함 확장자
+                </label>
+                <div className="flex flex-wrap gap-1.5 mb-2">
+                  {extensions.map((ext) => (
+                    <span
+                      key={ext}
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-secondary rounded-md text-xs text-foreground"
+                    >
+                      {ext}
+                      <button
+                        onClick={() => handleRemoveExtension(ext)}
+                        className="text-muted-foreground hover:text-destructive transition-colors"
+                      >
+                        <X className="w-3 h-3" />
+                      </button>
+                    </span>
+                  ))}
+                  {extensions.length === 0 && (
+                    <span className="text-xs text-muted-foreground">
+                      확장자가 없습니다
+                    </span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newExtension}
+                    onChange={(e) => setNewExtension(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        handleAddExtension();
+                      }
+                    }}
+                    placeholder="새 확장자 (예: .hwpx)"
+                    className="flex-1 px-3 py-2 bg-secondary rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                  />
+                  <motion.button
+                    type="button"
+                    onClick={handleAddExtension}
+                    className="px-3 py-2 bg-primary/10 text-primary rounded-lg text-sm font-medium hover:bg-primary/20 transition-colors"
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    <Plus className="w-4 h-4" />
+                  </motion.button>
+                </div>
+              </div>
+
+              {/* Date Subfolder Option */}
               <div className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -612,8 +695,12 @@ export default function OrganizeRulesModal({
     open: boolean;
     ruleId: string | null;
   }>({ open: false, ruleId: null });
+  // Extension mappings per category
+  const [categoryExtensions, setCategoryExtensions] = useState<
+    Record<string, string[]>
+  >({});
 
-  // Load rules from database when modal opens
+  // Load rules and extension mappings from database when modal opens
   useEffect(() => {
     const loadRules = async () => {
       if (!isOpen) return;
@@ -626,11 +713,24 @@ export default function OrganizeRulesModal({
         ]);
         setDefaultRules(dbDefaultRules);
         setCustomRules(dbCustomRules.map(toUIRule));
+
+        // Load extension mappings for each category
+        const extensionMap: Record<string, string[]> = {};
+        for (const rule of dbDefaultRules) {
+          try {
+            const exts = await rulesApi.getExtensionsByCategory(rule.category);
+            extensionMap[rule.category] = exts;
+          } catch {
+            extensionMap[rule.category] = [];
+          }
+        }
+        setCategoryExtensions(extensionMap);
         setHasUnsavedChanges(false);
       } catch (err) {
         console.error("Failed to load rules:", err);
         setDefaultRules([]);
         setCustomRules([]);
+        setCategoryExtensions({});
       } finally {
         setLoading(false);
       }
@@ -638,6 +738,15 @@ export default function OrganizeRulesModal({
 
     loadRules();
   }, [isOpen]);
+
+  // Handle extension changes for a category
+  const handleExtensionsChange = (category: string, extensions: string[]) => {
+    setCategoryExtensions((prev) => ({
+      ...prev,
+      [category]: extensions,
+    }));
+    setHasUnsavedChanges(true);
+  };
 
   const handleClose = useCallback(() => {
     if (hasUnsavedChanges) {
@@ -715,7 +824,18 @@ export default function OrganizeRulesModal({
     try {
       // Save default rules with priority based on order
       for (let i = 0; i < defaultRules.length; i++) {
-        await rulesApi.saveDefaultRule({ ...defaultRules[i], priority: i });
+        const rule = defaultRules[i];
+        await rulesApi.saveDefaultRule({ ...rule, priority: i });
+
+        // Save extension mappings for this category
+        const extensions = categoryExtensions[rule.category] || [];
+        if (extensions.length > 0) {
+          await rulesApi.updateCategoryExtensions(
+            rule.category,
+            extensions,
+            rule.destination
+          );
+        }
       }
 
       // Save custom rules with priority based on order
@@ -909,6 +1029,8 @@ export default function OrganizeRulesModal({
                           setExpandedDefaultRule={setExpandedDefaultRule}
                           toggleDefaultRule={toggleDefaultRule}
                           updateDefaultRule={updateDefaultRule}
+                          extensions={categoryExtensions[rule.category] || []}
+                          onExtensionsChange={handleExtensionsChange}
                         />
                       ))}
                     </Reorder.Group>

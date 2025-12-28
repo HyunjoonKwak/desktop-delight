@@ -1004,6 +1004,156 @@ fn get_default_rules_internal(db_path: &PathBuf) -> Result<Vec<DefaultRule>, Str
     Ok(rules)
 }
 
+// ============================================================================
+// Extension Mappings (확장자 매핑)
+// ============================================================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionMapping {
+    pub id: Option<i64>,
+    pub extension: String,
+    pub category: String,
+    pub target_folder: String,
+}
+
+/// Get all extension mappings
+#[tauri::command]
+pub fn get_extension_mappings(db_state: State<DbPath>) -> Result<Vec<ExtensionMapping>, String> {
+    let db_path = &db_state.0;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT id, extension, category, target_folder FROM extension_mappings ORDER BY category, extension")
+        .map_err(|e| e.to_string())?;
+
+    let mappings: Vec<ExtensionMapping> = stmt
+        .query_map([], |row| {
+            Ok(ExtensionMapping {
+                id: Some(row.get(0)?),
+                extension: row.get(1)?,
+                category: row.get(2)?,
+                target_folder: row.get(3)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(mappings)
+}
+
+/// Get extension mappings by category
+#[tauri::command]
+pub fn get_extensions_by_category(db_state: State<DbPath>, category: String) -> Result<Vec<String>, String> {
+    let db_path = &db_state.0;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn
+        .prepare("SELECT extension FROM extension_mappings WHERE category = ?1 ORDER BY extension")
+        .map_err(|e| e.to_string())?;
+
+    let extensions: Vec<String> = stmt
+        .query_map([&category], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(extensions)
+}
+
+/// Add an extension mapping
+#[tauri::command]
+pub fn add_extension_mapping(
+    db_state: State<DbPath>,
+    extension: String,
+    category: String,
+    target_folder: String,
+) -> Result<ExtensionMapping, String> {
+    let db_path = &db_state.0;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Normalize extension (ensure it starts with a dot)
+    let ext = if extension.starts_with('.') {
+        extension.to_lowercase()
+    } else {
+        format!(".{}", extension.to_lowercase())
+    };
+
+    conn.execute(
+        "INSERT OR REPLACE INTO extension_mappings (extension, category, target_folder) VALUES (?1, ?2, ?3)",
+        rusqlite::params![ext, category, target_folder],
+    )
+    .map_err(|e| e.to_string())?;
+
+    let id = conn.last_insert_rowid();
+
+    Ok(ExtensionMapping {
+        id: Some(id),
+        extension: ext,
+        category,
+        target_folder,
+    })
+}
+
+/// Remove an extension mapping
+#[tauri::command]
+pub fn remove_extension_mapping(db_state: State<DbPath>, extension: String) -> Result<(), String> {
+    let db_path = &db_state.0;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Normalize extension
+    let ext = if extension.starts_with('.') {
+        extension.to_lowercase()
+    } else {
+        format!(".{}", extension.to_lowercase())
+    };
+
+    conn.execute(
+        "DELETE FROM extension_mappings WHERE extension = ?1",
+        [&ext],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Update extensions for a category (replace all)
+#[tauri::command]
+pub fn update_category_extensions(
+    db_state: State<DbPath>,
+    category: String,
+    extensions: Vec<String>,
+    target_folder: String,
+) -> Result<(), String> {
+    let db_path = &db_state.0;
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+
+    // Delete existing mappings for this category
+    conn.execute(
+        "DELETE FROM extension_mappings WHERE category = ?1",
+        [&category],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Insert new mappings
+    for ext in extensions {
+        let normalized = if ext.starts_with('.') {
+            ext.to_lowercase()
+        } else {
+            format!(".{}", ext.to_lowercase())
+        };
+
+        conn.execute(
+            "INSERT INTO extension_mappings (extension, category, target_folder) VALUES (?1, ?2, ?3)",
+            rusqlite::params![normalized, category, target_folder],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(())
+}
+
 /// Internal function to preview unified without State wrapper
 fn preview_unified_internal(db_path: &PathBuf, source_path: &str) -> Result<Vec<UnifiedPreview>, String> {
     // Get custom rules

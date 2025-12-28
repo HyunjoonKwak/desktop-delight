@@ -1,6 +1,6 @@
 [package]
 name = "desktop-organizer-pro"
-version = "1.9.1"
+version = "1.9.2"
 description = "Desktop file organizer for Windows and macOS"
 authors = ["Desktop Organizer Team"]
 license = "MIT"

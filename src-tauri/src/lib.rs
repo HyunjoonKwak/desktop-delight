@@ -138,6 +138,12 @@ pub fn run() {
             commands::rules::save_default_rule,
             commands::rules::preview_unified,
             commands::rules::execute_unified,
+            // Extension mapping commands
+            commands::rules::get_extension_mappings,
+            commands::rules::get_extensions_by_category,
+            commands::rules::add_extension_mapping,
+            commands::rules::remove_extension_mapping,
+            commands::rules::update_category_extensions,
             // Watcher commands
             commands::watcher::start_watching,
             commands::watcher::stop_watching,

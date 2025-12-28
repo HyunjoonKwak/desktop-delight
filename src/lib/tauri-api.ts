@@ -23,6 +23,7 @@ import type {
   DefaultRule,
   UnifiedPreview,
   UnifiedOrganizeResult,
+  ExtensionMapping,
 } from './types';
 
 // Check if running in Tauri environment
@@ -259,6 +260,45 @@ export const rulesApi = {
     return invoke<UnifiedOrganizeResult>('execute_unified', {
       sourcePath,
       excludedDestinations: excludedDestinations || [],
+    });
+  },
+
+  // Extension mappings (확장자 매핑)
+  getExtensionMappings: async (): Promise<ExtensionMapping[]> => {
+    if (!isTauri()) return [];
+    return invoke<ExtensionMapping[]>('get_extension_mappings');
+  },
+
+  getExtensionsByCategory: async (category: string): Promise<string[]> => {
+    if (!isTauri()) return [];
+    return invoke<string[]>('get_extensions_by_category', { category });
+  },
+
+  addExtensionMapping: async (
+    extension: string,
+    category: string,
+    targetFolder: string
+  ): Promise<ExtensionMapping> => {
+    return invoke<ExtensionMapping>('add_extension_mapping', {
+      extension,
+      category,
+      targetFolder,
+    });
+  },
+
+  removeExtensionMapping: async (extension: string): Promise<void> => {
+    return invoke<void>('remove_extension_mapping', { extension });
+  },
+
+  updateCategoryExtensions: async (
+    category: string,
+    extensions: string[],
+    targetFolder: string
+  ): Promise<void> => {
+    return invoke<void>('update_category_extensions', {
+      category,
+      extensions,
+      targetFolder,
     });
   },
 };

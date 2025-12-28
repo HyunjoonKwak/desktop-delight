@@ -28,10 +28,9 @@ pub fn classify_extension(extension: &str) -> FileCategory {
         | ".ai" | ".tiff" | ".raw" | ".heic" => FileCategory::Images,
 
         // Documents
-        ".pdf" | ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx" | ".hwp" | ".txt"
-        | ".rtf" | ".odt" | ".ods" | ".odp" | ".pages" | ".numbers" | ".key" | ".epub" => {
-            FileCategory::Documents
-        }
+        ".pdf" | ".doc" | ".docx" | ".xls" | ".xlsx" | ".ppt" | ".pptx" | ".hwp" | ".hwpx"
+        | ".txt" | ".rtf" | ".odt" | ".ods" | ".odp" | ".pages" | ".numbers" | ".key"
+        | ".epub" => FileCategory::Documents,
 
         // Videos
         ".mp4" | ".avi" | ".mkv" | ".mov" | ".wmv" | ".flv" | ".webm" | ".m4v" | ".mpeg"

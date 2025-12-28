@@ -112,6 +112,7 @@ fn insert_default_extension_mappings(conn: &Connection) -> Result<(), String> {
         (".ppt", "documents", "Documents"),
         (".pptx", "documents", "Documents"),
         (".hwp", "documents", "Documents"),
+        (".hwpx", "documents", "Documents"),
         (".txt", "documents", "Documents"),
         (".rtf", "documents", "Documents"),
         (".odt", "documents", "Documents"),

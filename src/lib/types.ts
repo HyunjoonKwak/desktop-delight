@@ -110,6 +110,15 @@ export interface DefaultRule {
   destination: string;
   createDateSubfolder: boolean;
   priority: number;
+  extensions?: string[]; // Optional: loaded separately
+}
+
+// Extension mapping (확장자 매핑)
+export interface ExtensionMapping {
+  id?: number;
+  extension: string;
+  category: string;
+  targetFolder: string;
 }
 
 // Unified preview result (통합 미리보기 결과)
