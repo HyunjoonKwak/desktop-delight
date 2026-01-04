@@ -34,6 +34,8 @@ import FileDetailPanel from "./FileDetailPanel";
 import OrganizeRulesModal from "./OrganizeRulesModal";
 import RulePreviewModal from "./RuleManagement/RulePreviewModal";
 import { BackupManager } from "./BackupManager";
+import { EmptyState } from "./EmptyState";
+import { SkeletonLoader } from "./SkeletonLoader";
 import { useToast } from "@/hooks/use-toast";
 import { fileApi, historyApi, rulesApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
 import type { FileInfo, FileCategory } from "@/lib/types";
@@ -768,13 +770,12 @@ export default function DesktopView() {
         <AnimatePresence mode="wait">
           {isLoading ? (
             <motion.div
-              className="flex flex-col items-center justify-center py-16 text-muted-foreground"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
               key="loading"
             >
-              <RefreshCw className="w-12 h-12 mb-4 animate-spin opacity-50" />
-              <p className="text-sm">파일을 불러오는 중...</p>
+              <SkeletonLoader type={viewMode} count={12} />
             </motion.div>
           ) : organized ? (
             <motion.div
@@ -820,25 +821,22 @@ export default function DesktopView() {
               })}
             </motion.div>
           ) : filteredAndSortedFiles.length === 0 ? (
-            <motion.div
-              className="flex flex-col items-center justify-center py-16 text-muted-foreground"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
+            <EmptyState
               key="empty"
-            >
-              <Search className="w-12 h-12 mb-4 opacity-50" />
-              <p className="text-sm">
-                {searchQuery || activeTypeFilter ? "검색 결과가 없습니다" : "바탕화면에 파일이 없습니다"}
-              </p>
-              {(searchQuery || activeTypeFilter) && (
-                <button
-                  onClick={clearFilters}
-                  className="mt-2 text-xs text-primary hover:underline"
-                >
-                  필터 초기화
-                </button>
-              )}
-            </motion.div>
+              type={searchQuery ? "no-search-results" : activeTypeFilter ? "no-category-files" : "no-files"}
+              message={
+                searchQuery
+                  ? `"${searchQuery}"에 대한 검색 결과가 없습니다`
+                  : activeTypeFilter
+                  ? "선택한 카테고리에 파일이 없습니다"
+                  : undefined
+              }
+              action={
+                searchQuery || activeTypeFilter
+                  ? { label: "필터 초기화", onClick: clearFilters }
+                  : undefined
+              }
+            />
           ) : viewMode === "grid" ? (
             <motion.div
               className="grid grid-cols-4 gap-4"
