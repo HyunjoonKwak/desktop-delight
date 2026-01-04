@@ -38,6 +38,7 @@ import { EmptyState } from "./EmptyState";
 import { SkeletonLoader } from "./SkeletonLoader";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { SelectionToolbar } from "./SelectionToolbar";
+import { AdvancedSearch, type AdvancedSearchFilters } from "./AdvancedSearch";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useKeyboardShortcuts, type KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
@@ -119,6 +120,10 @@ export default function DesktopView() {
   const [canScrollRight, setCanScrollRight] = useState(true); // Default to true initially
   const [isShortcutsHelpOpen, setIsShortcutsHelpOpen] = useState(false);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
+  const [advancedFilters, setAdvancedFilters] = useState<AdvancedSearchFilters>({
+    categories: [],
+    extensions: [],
+  });
   const categoriesScrollRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -259,6 +264,12 @@ export default function DesktopView() {
     setHistory((prev) => [newItem, ...prev]);
   };
 
+  // Get unique extensions from all files
+  const availableExtensions = useMemo(() => {
+    const extensions = new Set(files.map(f => f.extension));
+    return Array.from(extensions).sort();
+  }, [files]);
+
   const filteredAndSortedFiles = useMemo(() => {
     let filtered = [...files];
 
@@ -272,6 +283,38 @@ export default function DesktopView() {
     // Filter by type
     if (activeTypeFilter) {
       filtered = filtered.filter((file) => file.category === activeTypeFilter);
+    }
+
+    // Apply advanced filters
+    if (advancedFilters.categories.length > 0) {
+      filtered = filtered.filter((file) => advancedFilters.categories.includes(file.category));
+    }
+
+    if (advancedFilters.extensions.length > 0) {
+      filtered = filtered.filter((file) => advancedFilters.extensions.includes(file.extension));
+    }
+
+    if (advancedFilters.minSize !== undefined) {
+      filtered = filtered.filter((file) => file.size >= advancedFilters.minSize!);
+    }
+
+    if (advancedFilters.maxSize !== undefined) {
+      filtered = filtered.filter((file) => file.size <= advancedFilters.maxSize!);
+    }
+
+    if (advancedFilters.dateFrom !== undefined) {
+      filtered = filtered.filter((file) => 
+        new Date(file.modifiedAt) >= advancedFilters.dateFrom!
+      );
+    }
+
+    if (advancedFilters.dateTo !== undefined) {
+      // Set to end of day for inclusive date range
+      const endOfDay = new Date(advancedFilters.dateTo);
+      endOfDay.setHours(23, 59, 59, 999);
+      filtered = filtered.filter((file) => 
+        new Date(file.modifiedAt) <= endOfDay
+      );
     }
 
     // Sort files
@@ -295,7 +338,7 @@ export default function DesktopView() {
     });
 
     return filtered;
-  }, [files, searchQuery, sortKey, sortOrder, activeTypeFilter]);
+  }, [files, searchQuery, sortKey, sortOrder, activeTypeFilter, advancedFilters]);
 
   const toggleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -460,6 +503,10 @@ export default function DesktopView() {
     setActiveTypeFilter(null);
     setSortKey("name");
     setSortOrder("asc");
+    setAdvancedFilters({
+      categories: [],
+      extensions: [],
+    });
   };
 
   const handleRefresh = () => {
@@ -813,142 +860,14 @@ export default function DesktopView() {
 
       {/* Files Grid */}
       <div className="glass rounded-2xl p-6 border border-border">
-        {/* Search and Sort Bar */}
-        <div className="flex items-center gap-4 mb-6">
-          {/* Search Input */}
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-            <input
-              ref={searchInputRef}
-              type="text"
-              placeholder="파일 검색... (Ctrl+F)"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-10 py-2.5 bg-secondary rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-muted transition-colors"
-              >
-                <X className="w-3.5 h-3.5 text-muted-foreground" />
-              </button>
-            )}
-          </div>
+        {/* Advanced Search */}
+        <AdvancedSearch
+          filters={advancedFilters}
+          onFiltersChange={setAdvancedFilters}
+          availableExtensions={availableExtensions}
+        />
 
-          {/* Sort Buttons */}
-          <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
-            <button
-              onClick={() => toggleSort("name")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                sortKey === "name"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              <span>이름</span>
-              <SortIcon keyName="name" />
-            </button>
-            <button
-              onClick={() => toggleSort("date")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                sortKey === "date"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              <span>날짜</span>
-              <SortIcon keyName="date" />
-            </button>
-            <button
-              onClick={() => toggleSort("size")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                sortKey === "size"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              <span>크기</span>
-              <SortIcon keyName="size" />
-            </button>
-            <button
-              onClick={() => toggleSort("category")}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                sortKey === "category"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-            >
-              <span>종류</span>
-              <SortIcon keyName="category" />
-            </button>
-          </div>
-
-          {/* View Mode Toggle */}
-          <div className="flex items-center gap-1 bg-secondary rounded-xl p-1">
-            <button
-              onClick={() => setViewMode("grid")}
-              className={`p-1.5 rounded-lg transition-all ${
-                viewMode === "grid"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-              title="그리드 뷰"
-            >
-              <LayoutGrid className="w-4 h-4" />
-            </button>
-            <button
-              onClick={() => setViewMode("list")}
-              className={`p-1.5 rounded-lg transition-all ${
-                viewMode === "list"
-                  ? "bg-primary text-primary-foreground"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              }`}
-              title="리스트 뷰"
-            >
-              <List className="w-4 h-4" />
-            </button>
-          </div>
-
-          {/* Clear Filters */}
-          {(searchQuery || activeTypeFilter) && (
-            <motion.button
-              onClick={clearFilters}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-destructive hover:bg-destructive/10 rounded-lg transition-colors"
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-            >
-              <X className="w-3.5 h-3.5" />
-              필터 초기화
-            </motion.button>
-          )}
-        </div>
-
-        {/* Header */}
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-medium text-foreground flex items-center gap-2">
-            <FolderOpen className="w-5 h-5 text-primary" />
-            바탕화면 파일
-            <span className="text-sm text-muted-foreground font-normal">
-              ({filteredAndSortedFiles.length}개)
-            </span>
-          </h2>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setSelectedFiles(filteredAndSortedFiles.map((f) => f.path))}
-              className="px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/10 rounded-lg transition-colors"
-            >
-              전체 선택
-            </button>
-            <button
-              onClick={() => setSelectedFiles([])}
-              className="px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-secondary rounded-lg transition-colors"
-            >
-              선택 해제
-            </button>
-          </div>
-        </div>
-
+        {/* Files Display Area */}
         <AnimatePresence mode="wait">
           {isLoading ? (
             <motion.div
@@ -1172,6 +1091,8 @@ export default function DesktopView() {
         onOpenChange={setIsBackupOpen}
       />
 
+      </div>
+
       {/* Keyboard Shortcuts Help */}
       <KeyboardShortcutsHelp
         open={isShortcutsHelpOpen}
@@ -1190,7 +1111,6 @@ export default function DesktopView() {
         onCopy={handleCopySelected}
         onDelete={handleDeleteSelected}
       />
-      </div>
     </TooltipProvider>
   );
 }
