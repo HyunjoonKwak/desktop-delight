@@ -37,6 +37,7 @@ import { BackupManager } from "./BackupManager";
 import { EmptyState } from "./EmptyState";
 import { SkeletonLoader } from "./SkeletonLoader";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
+import { SelectionToolbar } from "./SelectionToolbar";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useKeyboardShortcuts, type KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
@@ -117,6 +118,7 @@ export default function DesktopView() {
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true); // Default to true initially
   const [isShortcutsHelpOpen, setIsShortcutsHelpOpen] = useState(false);
+  const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
   const categoriesScrollRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -320,13 +322,31 @@ export default function DesktopView() {
     );
   };
 
-  const toggleSelect = (path: string, isDoubleClick?: boolean) => {
+  const toggleSelect = (path: string, isDoubleClick?: boolean, shiftKey?: boolean) => {
     if (isDoubleClick) {
       setSelectedFileForDetail(path);
+      return;
+    }
+
+    const currentIndex = filteredAndSortedFiles.findIndex(f => f.path === path);
+
+    // Handle Shift+Click for range selection
+    if (shiftKey && lastSelectedIndex !== -1 && currentIndex !== -1) {
+      const start = Math.min(lastSelectedIndex, currentIndex);
+      const end = Math.max(lastSelectedIndex, currentIndex);
+      const rangeFiles = filteredAndSortedFiles.slice(start, end + 1).map(f => f.path);
+      
+      setSelectedFiles(prev => {
+        const newSet = new Set(prev);
+        rangeFiles.forEach(p => newSet.add(p));
+        return Array.from(newSet);
+      });
     } else {
+      // Normal toggle
       setSelectedFiles((prev) =>
         prev.includes(path) ? prev.filter((f) => f !== path) : [...prev, path]
       );
+      setLastSelectedIndex(currentIndex);
     }
   };
 
@@ -450,9 +470,31 @@ export default function DesktopView() {
   const handleSelectAll = () => {
     if (selectedFiles.length === filteredAndSortedFiles.length) {
       setSelectedFiles([]);
+      setLastSelectedIndex(-1);
     } else {
       setSelectedFiles(filteredAndSortedFiles.map(f => f.path));
     }
+  };
+
+  const handleClearSelection = () => {
+    setSelectedFiles([]);
+    setLastSelectedIndex(-1);
+  };
+
+  const handleMoveSelected = () => {
+    // TODO: Implement move dialog
+    toast({
+      title: "이동 예정",
+      description: `${selectedFiles.length}개 파일을 이동합니다.`,
+    });
+  };
+
+  const handleCopySelected = () => {
+    // TODO: Implement copy dialog
+    toast({
+      title: "복사 예정",
+      description: `${selectedFiles.length}개 파일을 복사합니다.`,
+    });
   };
 
   const handleFocusSearch = () => {
@@ -984,17 +1026,20 @@ export default function DesktopView() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
             >
-              {filteredAndSortedFiles.map((file) => (
-                <FileCard
+              {filteredAndSortedFiles.map((file, index) => (
+                <div
                   key={file.path}
-                  name={file.name}
-                  type={categoryToType[file.category] as "image" | "document" | "video" | "audio" | "archive" | "code"}
-                  size={file.sizeFormatted}
-                  date={formatRelativeDate(file.modifiedAt)}
-                  selected={selectedFiles.includes(file.path)}
-                  onClick={() => toggleSelect(file.path)}
+                  onClick={(e) => toggleSelect(file.path, false, e.shiftKey)}
                   onDoubleClick={() => toggleSelect(file.path, true)}
-                />
+                >
+                  <FileCard
+                    name={file.name}
+                    type={categoryToType[file.category] as "image" | "document" | "video" | "audio" | "archive" | "code"}
+                    size={file.sizeFormatted}
+                    date={formatRelativeDate(file.modifiedAt)}
+                    selected={selectedFiles.includes(file.path)}
+                  />
+                </div>
               ))}
             </motion.div>
           ) : (
@@ -1024,7 +1069,7 @@ export default function DesktopView() {
                         ? "bg-primary/10 border border-primary/30"
                         : "hover:bg-secondary border border-transparent"
                     }`}
-                    onClick={() => toggleSelect(file.path)}
+                    onClick={(e) => toggleSelect(file.path, false, e.shiftKey)}
                     onDoubleClick={() => toggleSelect(file.path, true)}
                     initial={{ opacity: 0, x: -10 }}
                     animate={{ opacity: 1, x: 0 }}
@@ -1132,6 +1177,18 @@ export default function DesktopView() {
         open={isShortcutsHelpOpen}
         onOpenChange={setIsShortcutsHelpOpen}
         shortcuts={shortcuts}
+      />
+
+      {/* Selection Toolbar */}
+      <SelectionToolbar
+        selectedCount={selectedFiles.length}
+        totalCount={filteredAndSortedFiles.length}
+        isAllSelected={selectedFiles.length === filteredAndSortedFiles.length && filteredAndSortedFiles.length > 0}
+        onSelectAll={handleSelectAll}
+        onClearSelection={handleClearSelection}
+        onMove={handleMoveSelected}
+        onCopy={handleCopySelected}
+        onDelete={handleDeleteSelected}
       />
       </div>
     </TooltipProvider>
