@@ -36,8 +36,10 @@ import RulePreviewModal from "./RuleManagement/RulePreviewModal";
 import { BackupManager } from "./BackupManager";
 import { EmptyState } from "./EmptyState";
 import { SkeletonLoader } from "./SkeletonLoader";
+import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { useKeyboardShortcuts, type KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
 import { handleError } from "@/utils/errorHandler";
 import { fileApi, historyApi, rulesApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
 import type { FileInfo, FileCategory } from "@/lib/types";
@@ -114,7 +116,9 @@ export default function DesktopView() {
   const [selectedFileForDetail, setSelectedFileForDetail] = useState<string | null>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true); // Default to true initially
+  const [isShortcutsHelpOpen, setIsShortcutsHelpOpen] = useState(false);
   const categoriesScrollRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
   // Check scroll position for category cards
@@ -443,6 +447,120 @@ export default function DesktopView() {
     loadFiles();
   };
 
+  const handleSelectAll = () => {
+    if (selectedFiles.length === filteredAndSortedFiles.length) {
+      setSelectedFiles([]);
+    } else {
+      setSelectedFiles(filteredAndSortedFiles.map(f => f.path));
+    }
+  };
+
+  const handleFocusSearch = () => {
+    searchInputRef.current?.focus();
+  };
+
+  const handleDeleteSelected = async () => {
+    if (selectedFiles.length === 0) return;
+    
+    // TODO: Implement delete confirmation and execution
+    toast({
+      title: "삭제 예정",
+      description: `${selectedFiles.length}개 파일을 삭제합니다.`,
+    });
+  };
+
+  const handleUndoLast = async () => {
+    const lastUndoableItem = history.find(item => !item.undone);
+    if (lastUndoableItem) {
+      await handleUndo(lastUndoableItem.id);
+    }
+  };
+
+  const handleQuickLook = () => {
+    if (selectedFiles.length === 1) {
+      setSelectedFileForDetail(selectedFiles[0]);
+    }
+  };
+
+  // Define keyboard shortcuts
+  const shortcuts: KeyboardShortcut[] = [
+    {
+      key: 'a',
+      ctrl: true,
+      handler: handleSelectAll,
+      description: '모두 선택 / 선택 해제',
+      category: '선택',
+    },
+    {
+      key: 'f',
+      ctrl: true,
+      handler: handleFocusSearch,
+      description: '검색 포커스',
+      category: '탐색',
+    },
+    {
+      key: 'o',
+      ctrl: true,
+      handler: handleOrganize,
+      description: '자동 정리',
+      category: '작업',
+    },
+    {
+      key: 'z',
+      ctrl: true,
+      handler: handleUndoLast,
+      description: '마지막 작업 되돌리기',
+      category: '작업',
+    },
+    {
+      key: 'Delete',
+      handler: handleDeleteSelected,
+      description: '선택한 파일 삭제',
+      category: '작업',
+    },
+    {
+      key: ' ',
+      handler: handleQuickLook,
+      description: '빠른 보기 (선택한 파일)',
+      category: '탐색',
+    },
+    {
+      key: '/',
+      ctrl: true,
+      handler: () => setIsShortcutsHelpOpen(true),
+      description: '단축키 도움말 표시',
+      category: '도움말',
+    },
+    {
+      key: '?',
+      handler: () => setIsShortcutsHelpOpen(true),
+      description: '단축키 도움말 표시',
+      category: '도움말',
+    },
+    {
+      key: 'Escape',
+      handler: () => {
+        if (selectedFileForDetail) {
+          setSelectedFileForDetail(null);
+        } else if (selectedFiles.length > 0) {
+          setSelectedFiles([]);
+        }
+      },
+      description: '선택 해제 / 패널 닫기',
+      category: '탐색',
+    },
+    {
+      key: 'r',
+      ctrl: true,
+      handler: handleRefresh,
+      description: '새로고침',
+      category: '작업',
+    },
+  ];
+
+  // Apply keyboard shortcuts
+  useKeyboardShortcuts(shortcuts, true);
+
   return (
     <TooltipProvider>
       <div className="flex-1 p-6 overflow-auto">
@@ -659,8 +777,9 @@ export default function DesktopView() {
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
             <input
+              ref={searchInputRef}
               type="text"
-              placeholder="파일 검색..."
+              placeholder="파일 검색... (Ctrl+F)"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="w-full pl-10 pr-10 py-2.5 bg-secondary rounded-xl text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all"
@@ -1006,6 +1125,13 @@ export default function DesktopView() {
       <BackupManager
         open={isBackupOpen}
         onOpenChange={setIsBackupOpen}
+      />
+
+      {/* Keyboard Shortcuts Help */}
+      <KeyboardShortcutsHelp
+        open={isShortcutsHelpOpen}
+        onOpenChange={setIsShortcutsHelpOpen}
+        shortcuts={shortcuts}
       />
       </div>
     </TooltipProvider>
