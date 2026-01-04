@@ -36,6 +36,7 @@ import RulePreviewModal from "./RuleManagement/RulePreviewModal";
 import { BackupManager } from "./BackupManager";
 import { EmptyState } from "./EmptyState";
 import { SkeletonLoader } from "./SkeletonLoader";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { handleError } from "@/utils/errorHandler";
 import { fileApi, historyApi, rulesApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
@@ -443,7 +444,8 @@ export default function DesktopView() {
   };
 
   return (
-    <div className="flex-1 p-6 overflow-auto">
+    <TooltipProvider>
+      <div className="flex-1 p-6 overflow-auto">
       {/* Header */}
       <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-8">
         <div className="flex items-center gap-4 flex-shrink-0">
@@ -462,41 +464,59 @@ export default function DesktopView() {
 
         <div className="flex items-center gap-2 flex-wrap">
           {/* Backup Button */}
-          <motion.button
-            onClick={() => setIsBackupOpen(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-accent/20 text-accent hover:bg-accent/30 transition-all text-sm"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            title="백업"
-          >
-            <Shield className="w-4 h-4" />
-            <span className="hidden sm:inline">백업</span>
-          </motion.button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <motion.button
+                onClick={() => setIsBackupOpen(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-accent/20 text-accent hover:bg-accent/30 transition-all text-sm"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <Shield className="w-4 h-4" />
+                <span className="hidden sm:inline">백업</span>
+              </motion.button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>바탕화면 백업 관리</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Refresh Button */}
-          <motion.button
-            onClick={handleRefresh}
-            disabled={isLoading}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all disabled:opacity-50 text-sm"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            title="새로고침"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">새로고침</span>
-          </motion.button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <motion.button
+                onClick={handleRefresh}
+                disabled={isLoading}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all disabled:opacity-50 text-sm"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+                <span className="hidden sm:inline">새로고침</span>
+              </motion.button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>파일 목록 새로고침</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* Rules Button */}
-          <motion.button
-            onClick={() => setIsRulesModalOpen(true)}
-            className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all text-sm"
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            title="정리 규칙"
-          >
-            <Settings2 className="w-4 h-4" />
-            <span className="hidden sm:inline">정리 규칙</span>
-          </motion.button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <motion.button
+                onClick={() => setIsRulesModalOpen(true)}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl font-medium bg-secondary text-foreground hover:bg-secondary/80 transition-all text-sm"
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                <Settings2 className="w-4 h-4" />
+                <span className="hidden sm:inline">정리 규칙</span>
+              </motion.button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>파일 정리 규칙 설정</p>
+            </TooltipContent>
+          </Tooltip>
 
           {/* History Button */}
           <motion.button
@@ -516,40 +536,47 @@ export default function DesktopView() {
           </motion.button>
 
           {/* Organize Button */}
-          <motion.button
-            onClick={handleOrganize}
-            disabled={isOrganizing || organized || isLoading}
-            className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all text-sm ${
-              organized
-                ? "bg-accent/20 text-accent"
-                : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
-            } disabled:opacity-50`}
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            title="자동 정리"
-          >
-            {isOrganizing ? (
-              <>
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-                >
-                  <Sparkles className="w-4 h-4" />
-                </motion.div>
-                <span>정리 중...</span>
-              </>
-            ) : organized ? (
-              <>
-                <CheckCircle2 className="w-4 h-4" />
-                <span>정리 완료!</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="w-4 h-4" />
-                <span>자동 정리</span>
-              </>
-            )}
-          </motion.button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <motion.button
+                onClick={handleOrganize}
+                disabled={isOrganizing || organized || isLoading}
+                className={`flex items-center gap-2 px-4 py-2 rounded-xl font-medium transition-all text-sm ${
+                  organized
+                    ? "bg-accent/20 text-accent"
+                    : "gradient-primary text-primary-foreground shadow-glow hover:opacity-90"
+                } disabled:opacity-50`}
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+              >
+                {isOrganizing ? (
+                  <>
+                    <motion.div
+                      animate={{ rotate: 360 }}
+                      transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
+                    >
+                      <Sparkles className="w-4 h-4" />
+                    </motion.div>
+                    <span>정리 중...</span>
+                  </>
+                ) : organized ? (
+                  <>
+                    <CheckCircle2 className="w-4 h-4" />
+                    <span>정리 완료!</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4" />
+                    <span>자동 정리</span>
+                  </>
+                )}
+              </motion.button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>카테고리별로 파일을 자동 정리합니다</p>
+              <p className="text-xs text-muted-foreground mt-1">단축키: Ctrl+O</p>
+            </TooltipContent>
+          </Tooltip>
         </div>
       </div>
 
@@ -980,6 +1007,7 @@ export default function DesktopView() {
         open={isBackupOpen}
         onOpenChange={setIsBackupOpen}
       />
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }
