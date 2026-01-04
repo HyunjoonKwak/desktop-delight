@@ -234,13 +234,6 @@ export interface FolderTreeNode {
   children: FolderTreeNode[];
 }
 
-// Extension mapping types
-export interface ExtensionMapping {
-  extension: string;
-  category: string;
-  targetFolder: string;
-}
-
 // Folder compare types
 export type FileStatus = 'only_in_source' | 'only_in_target' | 'identical' | 'different';
 
