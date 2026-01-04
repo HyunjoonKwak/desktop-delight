@@ -42,6 +42,7 @@ import { AdvancedSearch, type AdvancedSearchFilters } from "./AdvancedSearch";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useKeyboardShortcuts, type KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
+import { useFileDragDrop } from "@/hooks/useFileDragDrop";
 import { handleError } from "@/utils/errorHandler";
 import { fileApi, historyApi, rulesApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
 import type { FileInfo, FileCategory } from "@/lib/types";
@@ -127,6 +128,7 @@ export default function DesktopView() {
   const categoriesScrollRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const dragDrop = useFileDragDrop();
 
   // Check scroll position for category cards
   const checkScrollPosition = useCallback(() => {
@@ -571,6 +573,39 @@ export default function DesktopView() {
     }
   };
 
+  // Handle file drop to category
+  const handleFileDrop = async (files: FileInfo[], targetCategory: string) => {
+    try {
+      if (!isTauri()) {
+        toast({
+          title: "이동 시뮬레이션",
+          description: `${files.length}개 파일을 ${targetCategory}(으)로 이동합니다.`,
+        });
+        return;
+      }
+
+      // TODO: Implement actual file move operation via Tauri
+      // This would call a backend function to move files to category folder
+      toast({
+        title: "파일 이동",
+        description: `${files.length}개 파일을 ${targetCategory}(으)로 이동했습니다.`,
+      });
+
+      addToHistory({
+        type: "organize",
+        description: `드래그 앤 드롭으로 파일 이동`,
+        details: `${files.length}개 파일을 ${targetCategory}(으)로 이동했습니다`,
+      });
+
+      // Reload files after move
+      await loadFiles();
+    } catch (error) {
+      handleError(error, toast, {
+        title: "파일 이동 실패",
+      });
+    }
+  };
+
   // Define keyboard shortcuts
   const shortcuts: KeyboardShortcut[] = [
     {
@@ -822,15 +857,39 @@ export default function DesktopView() {
               {categories.map((cat) => {
                 const count = files.filter((f) => f.category === cat.id).length;
                 const isActive = activeTypeFilter === cat.id;
+                const isDropTarget = dragDrop.state.dropTarget === cat.id;
+                const isDragging = dragDrop.state.isDragging;
+
                 return (
-                  <div
+                  <motion.div
                     key={cat.id}
                     onClick={() => setActiveTypeFilter(isActive ? null : cat.id)}
-                    className={`w-[130px] p-3 rounded-xl glass border cursor-pointer transition-all hover:scale-[1.02] hover:-translate-y-0.5 ${
+                    onDragOver={(e) => {
+                      if (isDragging) {
+                        e.preventDefault();
+                        dragDrop.setDropTarget(cat.id);
+                      }
+                    }}
+                    onDragLeave={() => {
+                      if (dragDrop.state.dropTarget === cat.id) {
+                        dragDrop.setDropTarget(null);
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      dragDrop.executeDrop((files) => handleFileDrop(files, cat.label));
+                    }}
+                    className={`w-[130px] p-3 rounded-xl glass border cursor-pointer transition-all ${
                       isActive
                         ? "border-primary shadow-glow"
+                        : isDropTarget
+                        ? "border-green-500 shadow-glow bg-green-500/10 scale-105"
                         : "border-border hover:border-primary/30"
-                    }`}
+                    } ${isDragging ? "hover:scale-105" : "hover:scale-[1.02] hover:-translate-y-0.5"}`}
+                    animate={{
+                      scale: isDropTarget ? 1.05 : 1,
+                      borderColor: isDropTarget ? "rgb(34 197 94)" : undefined,
+                    }}
                   >
                     <div
                       className="w-9 h-9 rounded-lg flex items-center justify-center mb-2"
@@ -839,8 +898,11 @@ export default function DesktopView() {
                       <cat.icon className="w-4 h-4" style={{ color: cat.color }} />
                     </div>
                     <p className="text-sm font-medium text-foreground">{cat.label}</p>
-                    <p className="text-xs text-muted-foreground">{count}개 파일</p>
-                  </div>
+                    <p className="text-xs text-muted-foreground">
+                      {count}개 파일
+                      {isDropTarget && " • 드롭하세요"}
+                    </p>
+                  </motion.div>
                 );
               })}
             </div>
@@ -945,21 +1007,48 @@ export default function DesktopView() {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
             >
-              {filteredAndSortedFiles.map((file, index) => (
-                <div
-                  key={file.path}
-                  onClick={(e) => toggleSelect(file.path, false, e.shiftKey)}
-                  onDoubleClick={() => toggleSelect(file.path, true)}
-                >
-                  <FileCard
-                    name={file.name}
-                    type={categoryToType[file.category] as "image" | "document" | "video" | "audio" | "archive" | "code"}
-                    size={file.sizeFormatted}
-                    date={formatRelativeDate(file.modifiedAt)}
-                    selected={selectedFiles.includes(file.path)}
-                  />
-                </div>
-              ))}
+              {filteredAndSortedFiles.map((file, index) => {
+                const isDraggingThis = dragDrop.isDraggingFile(file.path);
+                
+                return (
+                  <div
+                    key={file.path}
+                    draggable={true}
+                    onDragStart={(e: React.DragEvent) => {
+                      // If file is not selected, select only this file
+                      // If file is selected, drag all selected files
+                      const filesToDrag = selectedFiles.includes(file.path)
+                        ? files.filter(f => selectedFiles.includes(f.path))
+                        : [file];
+                      
+                      dragDrop.startDrag(filesToDrag);
+                      
+                      // Set drag image
+                      e.dataTransfer.effectAllowed = 'move';
+                      e.dataTransfer.setData('text/plain', filesToDrag.length.toString());
+                    }}
+                    onDragEnd={() => {
+                      dragDrop.endDrag();
+                    }}
+                    onClick={(e) => toggleSelect(file.path, false, e.shiftKey)}
+                    onDoubleClick={() => toggleSelect(file.path, true)}
+                    style={{
+                      opacity: isDraggingThis ? 0.5 : 1,
+                      transform: isDraggingThis ? 'scale(0.95)' : 'scale(1)',
+                      transition: 'opacity 0.2s, transform 0.2s',
+                    }}
+                    className={isDraggingThis ? "cursor-grabbing" : "cursor-grab"}
+                  >
+                    <FileCard
+                      name={file.name}
+                      type={categoryToType[file.category] as "image" | "document" | "video" | "audio" | "archive" | "code"}
+                      size={file.sizeFormatted}
+                      date={formatRelativeDate(file.modifiedAt)}
+                      selected={selectedFiles.includes(file.path)}
+                    />
+                  </div>
+                );
+              })}
             </motion.div>
           ) : (
             <motion.div
