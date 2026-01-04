@@ -128,12 +128,10 @@ export default function DesktopView() {
   // Scroll categories left/right
   const scrollCategories = (direction: 'left' | 'right') => {
     const container = categoriesScrollRef.current;
-    console.log('[DesktopView] scrollCategories called:', direction, 'container:', !!container);
     if (container) {
       const scrollAmount = 200;
       const currentScroll = container.scrollLeft;
       const maxScroll = container.scrollWidth - container.clientWidth;
-      console.log('[DesktopView] Current scroll:', currentScroll, 'Max scroll:', maxScroll, 'clientWidth:', container.clientWidth, 'scrollWidth:', container.scrollWidth);
 
       let newScrollLeft: number;
       if (direction === 'left') {
@@ -141,8 +139,6 @@ export default function DesktopView() {
       } else {
         newScrollLeft = Math.min(maxScroll, currentScroll + scrollAmount);
       }
-
-      console.log('[DesktopView] Setting scrollLeft to:', newScrollLeft);
 
       // Use direct scrollLeft assignment for immediate effect
       container.scrollLeft = newScrollLeft;
@@ -176,22 +172,18 @@ export default function DesktopView() {
     console.log("[DesktopView] isTauri:", isTauri());
     try {
       if (isTauri()) {
-        console.log("[DesktopView] Calling scanDesktop...");
         const [desktopFiles, path] = await Promise.all([
           fileApi.scanDesktop(),
           fileApi.getDesktopPath(),
         ]);
-        console.log("[DesktopView] Got files:", desktopFiles?.length);
         setFiles(desktopFiles.filter(f => !f.isDirectory));
         setDesktopPath(path);
       } else {
-        console.log("[DesktopView] Not in Tauri, using mock data");
         // Use mock data for development
         setFiles(mockDesktopFiles);
         setDesktopPath("/Users/mock/Desktop");
       }
     } catch (error) {
-      console.error("[DesktopView] Failed to load files:", error);
       toast({
         title: "파일 로드 실패",
         description: String(error),
