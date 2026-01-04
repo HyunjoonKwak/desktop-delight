@@ -37,6 +37,7 @@ import { BackupManager } from "./BackupManager";
 import { EmptyState } from "./EmptyState";
 import { SkeletonLoader } from "./SkeletonLoader";
 import { useToast } from "@/hooks/use-toast";
+import { handleError } from "@/utils/errorHandler";
 import { fileApi, historyApi, rulesApi, isTauri, formatRelativeDate } from "@/lib/tauri-api";
 import type { FileInfo, FileCategory } from "@/lib/types";
 
@@ -186,10 +187,9 @@ export default function DesktopView() {
         setDesktopPath("/Users/mock/Desktop");
       }
     } catch (error) {
-      toast({
+      handleError(error, toast, {
         title: "파일 로드 실패",
-        description: String(error),
-        variant: "destructive",
+        onActionClick: loadFiles,
       });
       // Don't fallback to mock data in Tauri - show the error instead
       if (!isTauri()) {
@@ -375,11 +375,9 @@ export default function DesktopView() {
         });
       }
     } catch (error) {
-      console.error("Organization failed:", error);
-      toast({
+      handleError(error, toast, {
         title: "정리 실패",
-        description: "파일 정리 중 오류가 발생했습니다.",
-        variant: "destructive",
+        onActionClick: handleOrganize,
       });
     } finally {
       setIsOrganizing(false);
@@ -409,10 +407,8 @@ export default function DesktopView() {
         description: "작업이 취소되었습니다.",
       });
     } catch (error) {
-      toast({
+      handleError(error, toast, {
         title: "되돌리기 실패",
-        description: "작업을 취소하는데 실패했습니다.",
-        variant: "destructive",
       });
     }
   };
@@ -428,10 +424,8 @@ export default function DesktopView() {
         description: "모든 작업 기록이 삭제되었습니다.",
       });
     } catch (error) {
-      toast({
+      handleError(error, toast, {
         title: "삭제 실패",
-        description: "히스토리 삭제에 실패했습니다.",
-        variant: "destructive",
       });
     }
   };

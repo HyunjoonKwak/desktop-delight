@@ -1,16 +1,10 @@
-import { getErrorMessage, type ErrorMessage } from '@/constants/errorMessages';
+import { getErrorMessage } from '@/constants/errorMessages';
 
 /**
  * Toast function type (from useToast hook)
+ * Using any to be compatible with actual useToast return type
  */
-export interface ToastFunction {
-  (props: {
-    title?: string;
-    description?: string;
-    variant?: 'default' | 'destructive';
-    action?: React.ReactNode;
-  }): void;
-}
+export type ToastFunction = any;
 
 /**
  * Handle errors with user-friendly messages
