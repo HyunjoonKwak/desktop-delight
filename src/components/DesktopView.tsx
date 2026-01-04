@@ -39,6 +39,7 @@ import { SkeletonLoader } from "./SkeletonLoader";
 import { KeyboardShortcutsHelp } from "./KeyboardShortcutsHelp";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { AdvancedSearch, type AdvancedSearchFilters } from "./AdvancedSearch";
+import { QuickLookModal } from "./QuickLookModal";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
 import { useKeyboardShortcuts, type KeyboardShortcut } from "@/hooks/useKeyboardShortcuts";
@@ -121,6 +122,8 @@ export default function DesktopView() {
   const [canScrollRight, setCanScrollRight] = useState(true); // Default to true initially
   const [isShortcutsHelpOpen, setIsShortcutsHelpOpen] = useState(false);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number>(-1);
+  const [isQuickLookOpen, setIsQuickLookOpen] = useState(false);
+  const [quickLookFile, setQuickLookFile] = useState<FileInfo | null>(null);
   const [advancedFilters, setAdvancedFilters] = useState<AdvancedSearchFilters>({
     categories: [],
     extensions: [],
@@ -569,7 +572,18 @@ export default function DesktopView() {
 
   const handleQuickLook = () => {
     if (selectedFiles.length === 1) {
-      setSelectedFileForDetail(selectedFiles[0]);
+      const file = files.find(f => f.path === selectedFiles[0]);
+      if (file) {
+        setQuickLookFile(file);
+        setIsQuickLookOpen(true);
+      }
+    } else if (selectedFiles.length > 1) {
+      // Show first selected file
+      const file = files.find(f => f.path === selectedFiles[0]);
+      if (file) {
+        setQuickLookFile(file);
+        setIsQuickLookOpen(true);
+      }
     }
   };
 
@@ -644,7 +658,14 @@ export default function DesktopView() {
     },
     {
       key: ' ',
-      handler: handleQuickLook,
+      handler: () => {
+        if (isQuickLookOpen) {
+          setIsQuickLookOpen(false);
+          setQuickLookFile(null);
+        } else {
+          handleQuickLook();
+        }
+      },
       description: '빠른 보기 (선택한 파일)',
       category: '탐색',
     },
@@ -664,7 +685,10 @@ export default function DesktopView() {
     {
       key: 'Escape',
       handler: () => {
-        if (selectedFileForDetail) {
+        if (isQuickLookOpen) {
+          setIsQuickLookOpen(false);
+          setQuickLookFile(null);
+        } else if (selectedFileForDetail) {
           setSelectedFileForDetail(null);
         } else if (selectedFiles.length > 0) {
           setSelectedFiles([]);
@@ -1142,6 +1166,16 @@ export default function DesktopView() {
         file={detailFileLegacy}
         isOpen={selectedFileForDetail !== null}
         onClose={() => setSelectedFileForDetail(null)}
+      />
+
+      {/* QuickLook Modal */}
+      <QuickLookModal
+        file={quickLookFile}
+        isOpen={isQuickLookOpen}
+        onClose={() => {
+          setIsQuickLookOpen(false);
+          setQuickLookFile(null);
+        }}
       />
 
       {/* Organize Rules Modal */}
