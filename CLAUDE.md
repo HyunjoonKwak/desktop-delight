@@ -25,16 +25,38 @@ Desktop Organizer Pro is a cross-platform (Windows/macOS) desktop file organizer
 ```
 ├── src/                      # React frontend
 │   ├── components/           # UI components
-│   │   ├── ui/               # shadcn/ui primitives
-│   │   ├── DesktopView.tsx   # Main desktop organizer
+│   │   ├── ui/               # shadcn/ui primitives (40+ components)
+│   │   ├── RuleManagement/   # Rule management components
+│   │   ├── DesktopView.tsx   # Main desktop organizer (w/ drag & drop)
 │   │   ├── BatchRename.tsx   # Bulk rename feature
-│   │   ├── ExtensionSort.tsx # Extension-based sorting
-│   │   └── FolderManager.tsx # Folder tree & analysis
+│   │   ├── FolderManager.tsx # Folder tree & analysis
+│   │   ├── FileContextMenu.tsx    # Right-click context menu
+│   │   ├── KeyboardShortcutsHelp.tsx  # Shortcuts help dialog
+│   │   ├── SelectionToolbar.tsx   # Multi-select toolbar
+│   │   ├── AdvancedSearch.tsx     # Advanced filtering
+│   │   ├── QuickLookModal.tsx     # File preview modal
+│   │   ├── EmptyState.tsx         # Empty state placeholders
+│   │   ├── SkeletonLoader.tsx     # Loading skeletons
+│   │   └── FileCardSkeleton.tsx   # File card skeleton
 │   ├── hooks/                # Custom React hooks
+│   │   ├── useKeyboardShortcuts.ts  # Keyboard shortcut system
+│   │   ├── useFileDragDrop.ts       # Drag & drop state
+│   │   ├── useFileSelection.ts      # File selection logic
+│   │   ├── useFileNavigation.ts     # Navigation with history
+│   │   └── use-toast.ts             # Toast notifications
+│   ├── constants/            # Shared constants
+│   │   ├── categories.ts     # Category configs & extensions
+│   │   ├── icons.ts          # Icon mappings
+│   │   └── errorMessages.ts  # Error message definitions
+│   ├── utils/                # Utility functions
+│   │   └── errorHandler.ts   # Centralized error handling
 │   ├── lib/
 │   │   ├── tauri-api.ts      # Tauri IPC command wrappers
-│   │   └── types.ts          # Shared TypeScript types
+│   │   ├── types.ts          # Shared TypeScript types
+│   │   └── utils.ts          # Helper functions
 │   └── stores/               # Zustand state management
+│       ├── fileStore.ts      # File & selection state
+│       └── uiStore.ts        # UI state (tabs, modals, view mode)
 ├── src-tauri/                # Rust backend
 │   ├── src/
 │   │   ├── commands/         # Tauri IPC commands
@@ -52,6 +74,10 @@ Desktop Organizer Pro is a cross-platform (Windows/macOS) desktop file organizer
 - **History/Undo**: Operations recorded in SQLite with undo data
 - **Styling**: Tailwind CSS + CSS variables (HSL), dark mode default
 - **Path Alias**: `@/` maps to `src/`
+- **Code Organization**: Shared constants in `src/constants/`, custom hooks in `src/hooks/`, utilities in `src/utils/`
+- **Error Handling**: Centralized via `errorHandler.ts` with user-friendly messages
+- **Animations**: Framer Motion for smooth transitions and interactions
+- **Accessibility**: Keyboard shortcuts, ARIA labels, focus management
 
 ### Frontend Views
 
@@ -61,6 +87,32 @@ Desktop Organizer Pro is a cross-platform (Windows/macOS) desktop file organizer
 | Rename | `BatchRename.tsx` | Bulk file renaming with preview |
 | Extension | `ExtensionSort.tsx` | Organize by extension/category |
 | Folder | `FolderManager.tsx` | Tree view, duplicates, analysis |
+
+### Key Features
+
+#### Usability
+- **Right-click Context Menu**: Quick actions on files (Preview, Rename, Move, Copy, Delete, Open in folder)
+- **Keyboard Shortcuts**: 10+ shortcuts for common actions (Ctrl+A, Ctrl+F, Space, etc.)
+  - View all shortcuts with `Ctrl+/` or `?`
+  - Platform-aware (⌘ on Mac, Ctrl on Windows)
+- **Multi-Select**: Shift+Click for range selection, checkbox selection
+  - SelectionToolbar appears with bulk actions
+- **Advanced Search**: Filter by category, size, date, extension
+  - Expandable panel with preset filters
+  - Active filter count badge
+- **Drag & Drop**: Drag files to category cards to organize
+  - Visual feedback with drop target highlighting
+  - Drag multiple selected files at once
+- **QuickLook Preview**: Press Space to preview selected file
+  - Image preview support
+  - File info for other types
+
+#### UI/UX Improvements
+- **Empty States**: Contextual messages for no files, no results, etc.
+- **Skeleton Loaders**: Smooth loading experience
+- **Error Handling**: User-friendly error messages with retry actions
+- **Tooltips**: Helpful hints with keyboard shortcuts
+- **Animations**: Framer Motion for polished interactions
 
 ### Rust Backend Modules
 
